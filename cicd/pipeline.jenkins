@@ -15,12 +15,35 @@ def promoteResult = [:]
 node('linux') 
 {
   stage('Build and Test') {
+    try {
     // Build Job : https://128.168.139.253:8443/view/Framework/job/Port-Build/
     buildResult = build job: 'Port-Build', parameters: [string(name: 'PORT_GITHUB_REPO', value: "${repo}"), string(name: 'PORT_BRANCH', value: "${branch}")]
+    } catch (Exception e) {
+      handleError(e, repo)
+    }
   }
   
   stage('Promote') {
-    // Publish Job : https://128.168.139.253:8443/view/Framework/job/Port-Publish/
-    promoteResult = build job: 'Port-Publish', parameters: [string(name: 'BUILD_SELECTOR', value: "<SpecificBuildSelector plugin=\"copyartifact@1.46.2\">  <buildNumber>${buildResult.number.toString()}</buildNumber></SpecificBuildSelector>"), string(name: 'PORT_GITHUB_REPO', value: "${repo}"), string(name: 'PORT_DESCRIPTION', value: "${description}")]
+    try {
+      // Publish Job : https://128.168.139.253:8443/view/Framework/job/Port-Publish/
+      promoteResult = build job: 'Port-Publish', parameters: [string(name: 'BUILD_SELECTOR', value: "<SpecificBuildSelector plugin=\"copyartifact@1.46.2\">  <buildNumber>${buildResult.number.toString()}</buildNumber></SpecificBuildSelector>"), string(name: 'PORT_GITHUB_REPO', value: "${repo}"), string(name: 'PORT_DESCRIPTION', value: "${description}")]
+    } catch (Exception e) {
+      handleError(e, repo)
+    }
   }
+ 
+  stage ('Cleanup') {
+    slackSend message: "Build for ${repo} successful <${currentBuild.absoluteUrl}|Build #${currentBuild.number}>"
+  }
+}
+
+def handleError(e, repo, reason="unknown") {
+  if (e && e.getMessage()) {
+    reason = e.getMessage()
+  } else if (env.STAGE_NAME) {
+    reason = "failure in ${env.STAGE_NAME.toLowerCase()} stage"
+  }
+  slackSend color: 'danger',
+            message: "${repo}:\n<${currentBuild.absoluteUrl}|Build #${currentBuild.number}> *Failed*\n*Reason:* _${reason}_"
+  throw e
 }
