@@ -1560,6 +1560,61 @@ getPortMetaData(){
   return 0
 }
 
+# createDependancyGraph
+# analyzes the input file to create the list of all packages that are to
+# be pulled in during install - and recurses if any added packages themselves
+# pull in dependancies, dependencies being added to the front of the install queue
+# inputs: $1 the file to use for install ports
+#         $2 an error file for outputing failures
+# return: 0  for success (output of pwd -P command)
+#         8  if error
+createDependancyGraph(){
+  invalidPortAssetFile=$1 && shift 
+  printDebug "Getting list of dependencies"
+  dependencies=$(echo "${installList}" | jq --raw-output '.installqueue[] | select(.asset.runtime_dependencies | test("No dependencies") | not )| map(try(.runtime_dependencies |= split(" ")))| .[] | .runtime_dependencies[] ')
+  printDebug "Removing any dependencies already on install queue"
+  installing=$(echo "${installList}" | jq --raw-output '.installqueue[] | .portname')
+  missing=$(diffList "${installing}" "${dependencies}" )
+  if [ -z "${missing}" ]; then
+    printDebug "All dependencies are in the install graph"
+    return 0
+  fi
+  printDebug "Adding dependencies to install graph"
+  addToInstallGraph "${invalidPortAssetFile}" "${missing}"
+  # Recurse in case the now-installing dependencies themselves have dependencies
+  # Recursive dependencies should not break as the initial package will have been
+  # marked for installation
+  createDependancyGraph "${invalidPortAssetFile}"
+}
+
+# addToInstallGraph
+# Finds appropriate metadata for the specified port(s) and
+# includes that in the installation file
+# inputs: $1 the file to use for validated ports
+#         $2 an error file for outputing failures
+#         $* requested list of packages to install
+# return: 0  for success (output of pwd -P command)
+#         8  if error
+addToInstallGraph(){
+  invalidPortAssetFile=$1 && shift 
+  pkgList="$1"
+  printDebug "Adding pkgList to install graph"
+  for portRequested in ${pkgList}; do
+    if ! getPortMetaData "${portRequested}" "${invalidPortAssetFile}"; then
+      continue
+    fi
+    ## Merge asset into output file - note the lack of inline file edit hence the mv
+    installList=$(echo "${installList}" | jq ".installqueue += [{\"portname\":\"${validatedPort}\", \"asset\":${asset}}]")
+  done
+  if [ -e "${invalidPortAssetFile}" ]; then
+    printSoftError "The following ports cannot be installed: "
+    while read invalidPort; do
+      printf "${WARNING} %s\n" "${invalidPort}"
+    done < "${invalidPortAssetFile}"
+    printError "Confirm port names, remove any 'port' suffixes and retry command."
+  fi
+}
+
 validateInstallList(){
   installees="$1"
   # shellcheck disable=SC2086 # Using set -f disables globbing
@@ -1578,6 +1633,73 @@ dedupStringList()
   str="$1"
   echo "${str}"| awk -v delim="${delim}" '                                                                                                      
     { dlm=""; for (i=1; i<=NF; i++) {if (!seen[$i]++) {printf "%s%s", dlm, $i};dlm=delim};print ""}'
+}
+
+# generateInstallGraph
+# generates a file with details for packages that are to be installed from
+# the in-use repository, reporting errors if ports were invalid and
+# triggering dependency graph population
+# inputs: $1 the file to use for validated ports
+#         $* requested list of packages to install
+# return: 0  for success (output of pwd -P command)
+#         8  if error
+generateInstallGraph(){
+  installList="{}"
+  printDebug "Parsing list of packages to install and verifying validity"
+  portsToInstall="$1" # start with the initial list
+  portsToInstall=$(dedupStringList ' ' "${portsToInstall}")
+  repo_metadata="${repo_results}"
+  # Create the following file here to trigger cleanup - otherwise, multiple
+  # tempfiles could be created depending on dependency graph depth
+  invalidPortAssetFile=$(mktempfile "invalid" "port")
+  addCleanupTrapCmd "rm -rf ${invalidPortAssetFile}"
+  addToInstallGraph "${invalidPortAssetFile}" "${portsToInstall}"
+  if  
+    # shellcheck disable=SC2154
+    ${doNotInstallDeps}; then
+      printVerbose "- Skipping dependency analysis"
+  else
+    # calculate dependancy graph
+    createDependancyGraph "${invalidPortAssetFile}"
+  fi
+  pruneGraph
+}
+
+pruneGraph()
+{
+  printDebug "Pruning entries in graph if already installed"
+  if "${reinstall}"; then 
+    # Reinstall packages if they are already installed - no prune needed
+    return 0
+  fi
+  if "${downloadOnly}"; then
+    # Download the pax files, even if already installed as they are not 
+    # being reinstalled so no prune required
+    return 0
+  fi
+    # Prune already installed packages at the requested level; compare the 
+    # incoming file name against the port name, version and release already on the system
+    # - seems to be the easiest comparison since some data is not in zopen_release vs metadata.json
+    # and a local pax won't have a remote repo but should have a file name!
+    installed=$(zopen list --installed --details)
+    # Ignore the version string - it varies across ports so use name and build time as that
+    # should be unique enough
+    installed=$(echo "${installed}"| awk 'BEGIN{ORS = "," } {print "\"" $1 "@=@" $3 "\""}')
+    installed="[${installed%,}]"
+    
+    installList=$(echo "${installList}" | \
+      jq  --argjson installees "${installed}" \
+        '.installqueue |=
+          map(
+            select(.asset.url |
+              capture(".*/ZOSOpenTools/(?<name>[^/]*)port.*-(?<ver>[^-]*)\\.(?<rel>\\d{8}_\\d{6}?)\\.zos\\.pax\\.Z$") |.rel as $rel | .name as $name |
+              $installees | map(
+                .|capture("(?<iname>[^@]*)@=@(?<irel>\\d{8}_\\d{6}?)$")|.iname as $iname | .irel as $irel |
+                ($iname+"-"+$irel) == ($name+"-"+$rel)
+              ) | any == false
+            )
+          )'\
+    )
 }
 
 spaceValidate(){
