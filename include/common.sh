@@ -392,6 +392,7 @@ defineANSI()
 
   # Color-type codes, needs explicit terminal settings
   if [ ! "${_BPX_TERMPATH-x}" = "OMVS" ] && [ -z "${NO_COLOR}" ] && [ ! "${FORCE_COLOR-x}" = "0" ] && [ -t 1 ] && [ -t 2 ]; then
+    ANSION=true
     esc="\047"
     BLACK="${esc}[30m"
     RED="${esc}[31m"
@@ -417,15 +418,18 @@ defineANSI()
     fi
   else
     # unset esc RED GREEN YELLOW BOLD UNDERLINE NC
-
+    ANSION=false
     esc=''
+    # shellcheck disable=SC2034
     BLACK=''
     RED=''
     GREEN=''
     YELLOW=''
     BLUE=''
     MAGENTA=''
+    # shellcheck disable=SC2034
     CYAN=''
+    # shellcheck disable=SC2034
     GRAY=''
     BOLD=''
     UNDERLINE=''
@@ -440,19 +444,31 @@ ansiline()
 {
   deltax=$1
   deltay=$2
-  echostr=$3
-  if [ ${deltax} -gt 0 ]; then
-    echostr="${ESC}[${deltax}A${echostr}"
-  elif [ ${deltax} -lt 0 ]; then
-    echostr="${ESC}[$(expr ${deltax} \* -1)A${echostr}"
-  fi
-  if [ ${deltay} -gt 0 ]; then
-    echostr="${ESC}[${deltax}C${echostr}"
-  elif [ ${deltay} -lt 0 ]; then
-    echostr="${ESC}[$(expr ${deltax} \* -1)D${echostr}"
-  fi
-  /bin/echo "${echostr}"
+  echostr="$3"
+  ansimove $1 $2
+  /bin/echo "${echostr}\c"
+}
 
+ansimove()
+{
+  deltax=$1
+  deltay=$2
+  movestr=""
+  if [ -n "${deltax}" ]; then
+    if [ "${deltax}" -gt 0 ]; then
+      movestr="${ESC}[${deltax}C"
+    elif [ "${deltax}" -lt 0 ]; then
+      movestr="${ESC}[$(expr "${deltax}" \* -1)D"
+    fi
+  fi
+  if [ -n "${deltay}" ]; then
+    if [ "${deltay}" -gt 0 ]; then
+      movestr="${movestr}${ESC}[${deltay}B"
+    elif [ "${deltay}" -lt 0 ]; then
+      movestr="${movestr}${ESC}[$(expr "${deltay}" \* -1)A"
+    fi
+  fi
+  /bin/echo "${movestr}\c"
 }
 
 getScreenCols()
@@ -718,6 +734,7 @@ unsymlinkFromSystem()
         fi 
       done
       ${killph} 2>/dev/null # if the timer is not running, the kill will fail
+      waitforpid ${ph}  # Make sure it's finished writing to screen
       sleep 1 # give spinner time to exit if running
     else
       # Slower method needed to analyse each link to see if it has
@@ -736,9 +753,9 @@ unsymlinkFromSystem()
       [ -e "${tempTrash}" ] && rm -f "${tempTrash}" >/dev/null 2>&1
       addCleanupTrapCmd "rm -rf ${tempDirFile}"
       printDebug "Using temporary file ${tempDirFile}"
-      printInfo "- Checking ${nfiles} potential links"
+      printInfo "- Checking ${nfiles} potentially obsolete file links"
       printDebug "Starting spinner..."
-      progressHandler "spinner" "- Complete" &
+      progressHandler "linkcheck" "- Complete" &
       ph=$!
       killph="kill -HUP ${ph}"
       addCleanupTrapCmd "${killph}"
@@ -767,7 +784,7 @@ unsymlinkFromSystem()
 $(zossed '1d;$d' "${dotlinks}")
 EOF
       ${killph} 2>/dev/null # if the timer is not running, the kill will fail
-      sleep 1 # ensure the spinner has stopped if running
+      waitforpid ${ph}  # Make sure it's finished writing to screen
       if [ -e "${tempDirFile}" ]; then
         ndirs=$(uniq < "${tempDirFile}" | wc -l  | tr -d ' ')
         printVerbose "- Checking ${ndirs} dir links"
@@ -850,7 +867,7 @@ runLogProgress()
   fi
   progressHandler "spinner" "- ${completeText}" &
   ph=$!
-  killph="kill -HUP ${ph} 2>/dev/null"
+  killph="kill -HUP ${ph}"
   addCleanupTrapCmd "${killph}"
   eval "$1"
   rc=$?
@@ -858,6 +875,7 @@ runLogProgress()
     chtag -r ${SSH_TTY}
   fi
   ${killph} 2> /dev/null # if the timer is not running, the kill will fail
+  waitforpid ${ph}  # Make sure it's finished writing to screen
   return "${rc}"
 }
 
@@ -877,7 +895,7 @@ progressAnimation()
   [ $# -eq 0 ] && printError "Internal error: no animation strings."
   animcnt=$#
   anim=1
-  ansiline 0 0 "$1"
+#  ansiline 0 0 "$1\n\c"
   while :; do
     spinloop 1000
     # Check for daemonization of this process (ie. orphaned and PPID=1)
@@ -888,34 +906,49 @@ progressAnimation()
     [ "${ppid}" -eq 1 ] && kill INT "${ppid}" >/dev/null 2>&1
     anim=$((anim + 1))
     [ ${anim} -gt ${animcnt} ] && anim=1
-    ansiline 1 -1 $(getNthArrayArg "${anim}" "$@")
+    ansiline -10 0 "$(getNthArrayArg "${anim}" "$@")"
+    ansimove -10 0
   done
 }
 
-getNthArrayArg () {
+getNthArrayArg ()
+{
     shift "$1"
-    echo "$1"
+    echo "$1\c"
+}
+
+waitforpid()
+{
+while kill -0 "$1" >/dev/null 2>&1; do
+  sleep 1
+done
 }
 
 progressHandler()
 {
-  if [ ! "${_BPX_TERMPATH-x}" = "OMVS" ] && [ -z "${NO_COLOR}" ] && [ ! "${FORCE_COLOR-x}" = "0" ] && [ -t 1 ] && [ -t 2 ]; then
+ # if [ ! "${_BPX_TERMPATH-x}" = "OMVS" ] && [ -z "${NO_COLOR}" ] && [ ! "${FORCE_COLOR-x}" = "0" ] && [ -t 1 ] && [ -t 2 ]; then
+  if ${ANSION}; then
     [ -z "${-%%*x*}" ] && set +x # Disable -x debug if set for this process
     type=$1
     completiontext=$2 # Custom end text (when the process is complete)
     trapcmd="exit;"
     if [ -n "${completiontext}" ]; then
-      trapcmd="/bin/echo \"\047[1A\047[30D\047[2K${completiontext}\"; ${trapcmd}"
+    ansiline
+      #trapcmd="/bin/echo \"\047[0A\047[10D\047[2K${completiontext}\n\c\"; ${trapcmd}"
+      trapcmd="/bin/echo \"\047[10D\047[K${completiontext}\n\c\"; ${trapcmd}"
+    else
+      #trapcmd="/bin/echo \"\047[0A\047[10D\c\"; ${trapcmd}"
+      trapcmd="/bin/echo \"\047[10D\047[K\c\"; ${trapcmd}"
     fi
     # shellcheck disable=SC2064
     trap "${trapcmd}" HUP
     case "${type}" in
-      "spinner") progressAnimation '-' '\' '|' '/'
-      ;;
-      "network") progressAnimation '-----' '>----' '->---' '-->--' '--->-' '---->' '-----' '----<' '---<-' '--<--' '-<---' '<----'
-      ;;
-      *) progressAnimation '.' 'o' 'O' 'O' 'o' '.'
-      ;;
+      "spinner")  progressAnimation '-' '>' '|' '>' ;;
+      "network")  progressAnimation '-----' '>----' '->---' '-->--' '--->-' '---->' '-----' '----<' '---<-' '--<--' '-<---' '<----' ;;
+      "mirror")   progressAnimation '#______' '##_____' '#=#____' '#==#___' '#===#__' '#====#_' '#=====#' '#_====#' '#__===#' '#___==#' '#____=#' '#_____#' ;;
+      "trash")    progressAnimation 'O________' '_O_______' '__O______' '___o_____' '____o____' '_____o___' '______.__' '_______._' '________.' ;;
+      "linkcheck")progressAnimation '------>' '?----->' '-?---->' '--?--->' '---?-->' '----?->' '-----?>';;
+      *)          progressAnimation '.' 'o' 'O' 'O' 'o' '.' ;;
     esac
   fi
 }
