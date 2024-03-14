@@ -1623,6 +1623,76 @@ processActionScripts()
   )
 }
 
+updatePackageDB()
+{
+  printVerbose "Updating the installed package tracker db"
+  if ! pkgdirs=$(getActivePackageDirs); then
+    printError "Unable to update the package db"
+  fi
+
+  pdb="${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json"
+  if [ -e "${pdb}" ]; then
+    backup=$(mktempfile "updatepdb" "bkk")
+    cp "${pdb}" "${backup}"
+    rm "${pdb}"
+  fi
+  pkgdirs=$(getActivePackageDirs)
+  for pkgdir in ${pkgdirs}; do
+    if [ ! -e "${ZOPEN_PKGINSTALL}/${pkgdir}/metadata.json" ]; then
+      printWarning "No metadata.json found in '${ZOPEN_PKGINSTALL}/${pkgdir}'. Bad package install?"
+      continue
+    fi
+    metadata=$(cat "${ZOPEN_PKGINSTALL}/${pkgdir}/metadata.json")
+    if [ ! -e "${pdb}" ]; then
+      echo "[]" > "${pdb}"
+    fi
+
+    mdj=$(echo "${metadata}" | jq '. as $metadata | .product.repo | match(".*/ZOSOpenTools/(.*)port").captures[0].string | [{(.):$metadata}]')
+    if ! jq --argjson mdj "${mdj}" '. += $mdj' \
+            "${pdb}" > \
+            "${pdb}.working"; then
+      printError "Could not add metadata for '${pkg}' to install tracker. Run zopen --re-init to attempt regeneration."
+    fi
+    mv "${pdb}.working" "${pdb}"
+  done
+}
+
+addToInstallTracker()
+{
+  pkg=$1
+  pdb="${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json"
+  if [ ! -e "${pdb}" ]; then
+    # Generate the packageDB
+    printWarning "No package tracker found, regenerating [subsequent runs will be faster]"
+    updatePackageDB
+  fi
+  metadataJson=$(cat "${ZOPEN_PKGINSTALL}/${pkg}/${pkg}/metadata.json")
+  if ! jq --argjson mdj "[{\"${pkg}\":${metadataJson}}]" \
+      "if any(.[]; has(\"${pkg}\")) then . |= map( if has(\"${pkg}\") then \$mdj[] else  . end ) else . + \$mdj end" \
+        "${pdb}" > \
+        "${pdb}.working"; then
+    printError "Could not update metadata for '${pkg}' in package tracker. Run zopen -init -re-init to attempt regeneration."
+  fi
+  mv "${pdb}.working" "${pdb}"
+}
+
+removeFromInstallTracker()
+{
+  pkg=$1
+  pdb="${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json"
+  if [ ! -e "${pdb}" ]; then
+    # Generate the packageDB
+    printWarning "No package tracker found, regenerating [subsequent runs will be faster]"
+    updatePackageDB
+  fi
+  if ! jq \
+      "map(select(has(\"${pkg}\") | not))" \
+        "${pdb}" > \
+        "${pdb}.working"; then
+    printError "Could not add metadata for '${pkg}' to install tracker. Run zopen --re-init to attempt regeneration."
+  fi
+  mv "${pdb}.working" "${pdb}"
+}
 
 jqfunctions()
 {
