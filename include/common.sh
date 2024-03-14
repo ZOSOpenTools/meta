@@ -1346,4 +1346,20 @@ promptYesOrNo() {
 
 . ${INCDIR}/analytics.sh
 
+jqfunctions()
+{
+  # Return a set of helper functions for jq that can be prepended to
+  # any jq query
+  # pl(s;c;n) - padLeft with character 'c' to length 'n'
+  # pr(s;c;n) - padRight with chacater 'c' to length 'n'
+  # c(s;l) - center the string 's' in a string of length 'l'
+  # r(dp) - round decimal to 'dp' decimal places (needs '*' & '/' 10^dp hack) 
+  # shellcheck disable=SC2016
+  printf "%s;%s;%s;%s;" \
+  'def pl(s;c;n):c*(n-(s|length))+s' \
+  'def pr(s;c;n):s+c*(n-(s|length))' \
+  'def c(s;c;l):(((l - (s|length))/2 | floor ) // 0) as $lp|((l - (s|length) - $lp) // 0 )as $rp|pl("";c; $lp) + s + pr("";c; $rp)' \
+  'def r(dp):.*pow(10;dp)|round/pow(10;dp)'
+}
+
 zopenInitialize
