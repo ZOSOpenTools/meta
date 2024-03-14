@@ -1799,6 +1799,93 @@ extractMetadataFromPax()
   fi
 }
 
+installFromPax()
+{
+  pax="${downloadToDir}/$1"
+  printDebug "Installing from '${pax}'"
+  processActionScripts "install-pre"
+  metadatafile=$(extractMetadataFromPax "${pax}")
+  # Ideally we would use the following, but name does not always map
+  # to the actual repo package name at present.  The repo name is in the
+  # repo field so can extract from there instead
+  #name=$(jq --raw-output '.product.name' "${metadatafile}")
+  name=$(jq --raw-output '.product.repo | match(".*/ZOSOpenTools/(.*)port").captures[0].string' "${metadatafile}")
+  paxname="${installurl##*/}"
+  installdirname="${name}/${paxname%.pax.Z}" # Use full pax name as default
+
+  baseinstalldir="${ZOPEN_PKGINSTALL}"
+  paxredirect="-s %[^/]*/%${ZOPEN_PKGINSTALL}/${installdirname}/%"
+
+  printDebug "Check for existing directory for version '${installdirname}'"
+  if [ -d "${ZOPEN_PKGINSTALL}/${installdirname}" ]; then 
+    printVerbose "- Clearing existing directory and contents"
+    rm -rf "${ZOPEN_PKGINSTALL}/${installdirname}"
+  fi
+
+  # shellcheck disable=SC2154
+  if ! runLogProgress "pax -rf ${pax} -p p ${paxredirect} ${redirectToDevNull}" "Expanding ${pax}" "Expanded"; then
+    printSoftError "Unexpected errors during unpaxing, package directory state unknown"
+    printError "Use zopen alt to select previous version to ensure known state"
+  fi
+
+  if [ -e "${ZOPEN_PKGINSTALL}/${name}/${name}/.pinned" ]; then
+    printWarning "Current version of ${name} is pinned; not setting updated version as active"
+    setactive=false
+    unInstallOldVersion=false
+  fi
+  # shellcheck disable=SC2154
+  if ${setactive}; then
+    if [ -L "${ZOPEN_PKGINSTALL}/${name}/${name}" ]; then
+      printDebug "Removing old symlink '${ZOPEN_PKGINSTALL}/${name}/${name}'"
+      rm -f "${ZOPEN_PKGINSTALL}/${name}/${name}"
+    fi
+    if ! ln -s "${ZOPEN_PKGINSTALL}/${installdirname}" "${ZOPEN_PKGINSTALL}/${name}/${name}"; then
+      printError "Could not create symbolic link name"
+    fi 
+    if ! ${nosymlink}; then
+      mergeIntoSystem "${name}" "${ZOPEN_PKGINSTALL}/${installdirname}" "${ZOPEN_ROOTFS}" 
+      misrc=$?
+      printDebug "The merge complete with: ${misrc}"
+    fi
+
+    printVerbose "- Checking for env file"
+    if [ -f "${ZOPEN_PKGINSTALL}/${name}/${name}/.env" ] || [ -f "${ZOPEN_PKGINSTALL}/${name}/${name}/.appenv" ]; then
+      printVerbose "- .env file found, adding to profiled processing"
+      mkdir -p "${ZOPEN_ROOTFS}/etc/profiled/${name}"
+      cat << EOF > "${ZOPEN_ROOTFS}/etc/profiled/${name}/dotenv"
+curdir=\$(pwd)
+cd "${ZOPEN_PKGINSTALL}/${name}/${name}" >/dev/null 2>&1
+# If .appenv exists, source it as it's quicker
+if [ -f ".appenv" ]; then
+  . ./.appenv
+elif [ -f ".env" ]; then
+  . ./.env
+fi
+cd \${curdir}  >/dev/null 2>&1
+EOF
+      printVerbose "- Running any setup scripts"
+      cd "${ZOPEN_PKGINSTALL}/${name}/${name}" && [ -r "./setup.sh" ] && ./setup.sh >/dev/null
+    fi
+  fi
+  if ${unInstallOldVersion}; then
+    printDebug "New version merged; checking for orphaned files from previous version"
+    # This will remove any old symlinks or dirs that might have changed in an upgrade
+    # as the merge process overwrites existing files to point to different version
+    unsymlinkFromSystem "${name}" "${ZOPEN_ROOTFS}" "${currentlinkfile}" "${baseinstalldir}/${name}/${name}/.links"
+  fi
+
+  if ${setactive}; then
+    printDebug "Marking this version as installed"
+    touch "${ZOPEN_PKGINSTALL}/${name}/${name}/.active"
+    installedList="${name} ${installedList}"
+    syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_INSTALL},${CAT_PACKAGE}" "DOWNLOAD" "handlePackageInstall" "Installed package:'${name}';version:${downloadFileVer};install_dir='${baseinstalldir}/${installdirname}';"
+    addToInstallTracker "${name}"    
+    processActionScripts "install-post"
+  fi
+  printInfo "${NC}${GREEN}Successfully installed ${name}${NC}"
+}
+
+
 getActivePackageDirs()
 {
   (unset CD_PATH; cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
