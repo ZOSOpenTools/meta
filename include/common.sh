@@ -507,7 +507,7 @@ findrev()
 {
   haystack="$1"
   needle="$2"
-  while [[ "${haystack}" != "" && "${haystack}" != "/" && "${haystack}" != "./" && ! -e "${haystack}/${needle}" ]]; do
+  while [ "${haystack}" != "" ] && [ "${haystack}" != "/" ] && [ "${haystack}" != "./" ] && [ ! -e "${haystack}/${needle}" ]; do
     haystack=${haystack%/*}
   done
   echo "${haystack}"
@@ -563,7 +563,7 @@ mutexReq()
     lockedpid=$(cat ${mutex})
     {
       [ ! "${lockedpid}" = "${mypid}" ] && [ ! "${lockedpid}" = "${PPID}" ]
-    } && kill -0 "${lockedpid}" 2> /dev/null && echo "Aborting, Active process '${lockedpid}' holds the '$2' lock: '${mutex}'" && exit -1
+    } && kill -0 "${lockedpid}" 2> /dev/null && echo "Aborting, Active process '${lockedpid}' holds the '$2' lock: '${mutex}'" && exit 4
   fi
   addCleanupTrapCmd "rm -rf ${mutex}"
   echo "${mypid}" > ${mutex}
@@ -624,7 +624,6 @@ mergeIntoSystem()
   [ -z "${rebaseusr}" ] && rebaseusr="usr/local"
 
   currentDir="${PWD}"
-  targetdir="${rootfs}/${rebaseusr}" # The main rootfs/usr location
 
   printDebug "Calculating the offset path to store from root"
   offset=$(dirname "${versioneddir#"${rootfs}"/}")
@@ -641,7 +640,7 @@ mergeIntoSystem()
   mv "${versioneddir}" "${virtualStore}"
 
   printDebug "Creating main linked directory in store"
-  $(cd "${virtualStore}" && ln -s "${version}" "${name}")
+  cd "${virtualStore}" && ln -s "${version}" "${name}"
 
   printDebug "Creating virtual root directory structure"
   mkdir -p "${processingDir}/${rebaseusr}"
@@ -653,8 +652,7 @@ mergeIntoSystem()
   printDebug "Generating symlink tree"
 
   printDebug "Creating directory structure"
-  curdir="${PWD}"
-  cd "${virtualStore}/${name}" || exit
+  cd "${virtualStore}/${name}" || printError "Unable to change to virtual store at '${virtualStore}/${name}'"
   # since 'ln *' doesn't invoke globbing to allow multiple files at once,
   # abuse the Recurse option; this results in "already exists" errors but
   # ignore them as the first call should generate the correct link but
@@ -663,9 +661,9 @@ mergeIntoSystem()
   zosfind . -type d | sort -r | while read dir; do
     dir=$(echo "${dir}" | zossed "s#^./##")
     printDebug "Processing dir: ${dir}"
-    [ ${dir} = "." ] && continue
+    [ "${dir}" = "." ] && continue
     mkdir -p "${processingDir}/${rebaseusr}/${dir}"
-    cd "${processingDir}/${rebaseusr}/${dir}" || exit
+    cd "${processingDir}/${rebaseusr}/${dir}" || printError "Unable to change to processing directory '${processingDir}/${rebaseusr}/${dir}'"
     dirrelpath=$(relativePath2 "${virtualStore}/${name}/${dir}" "${processingDir}/${rebaseusr}/${dir}")
     ln -Rs "${dirrelpath}/" "." 2> /dev/null
   done
@@ -681,7 +679,7 @@ mergeIntoSystem()
 
   printDebug "Generating intermediary tar file"
   # Need '-S' to allow long symlinks
-  $(cd "${processingDir}" && tar -S -cf "${tarfile}" "usr")
+  cd "${processingDir}" && tar -S -cf "${tarfile}" "usr"
 
   printDebug "Generating listing for remove processing (including main symlink)."
   listing=$(tar tf "${processingDir}/${tarfile}" 2> /dev/null | sort -r)
@@ -694,8 +692,8 @@ mergeIntoSystem()
   printDebug "Cleaning temp resources."
   rm -rf "${processingDir}" 2> /dev/null
 
-  printDebug "Switching to previous cwd - current work dir was purged."
-  cd "${currentDir}" || exit
+  printDebug "Switching to previous cwd - current work dir was purged"
+  cd "${currentDir}" || printError "Unable to change to '${currentDir}'"
 
   printInfo "- Integration complete."
   return 0
@@ -808,20 +806,22 @@ EOF
 printDebug()
 {
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
+  # shellcheck disable=SC2154
   if ${debug}; then
     printColors "${NC}${BLUE}${BOLD}:DEBUG:${NC}: '${1}'" >&2
   fi
-  [ ! -z "${xtrc}" ] && set -x
+  [ -n "${xtrc}" ] && set -x
   return 0
 }
 
 printVerbose()
 {
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
+  # shellcheck disable=SC2154
   if ${verbose}; then
     printColors "${NC}${GREEN}${BOLD}VERBOSE${NC}: ${1}" >&2
   fi
-  [ ! -z "${xtrc}" ] && set -x
+  [ -n "${xtrc}" ] && set -x
   return 0
 }
 
@@ -829,7 +829,7 @@ printHeader()
 {
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
   printColors "${NC}${HEADERCOLOR}${BOLD}${UNDERLINE}${1}${NC}" >&2
-  [ ! -z "${xtrc}" ] && set -x
+  [ -n "${xtrc}" ] && set -x
   return 0
 }
 
@@ -837,7 +837,7 @@ printAttention()
 {
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
   printColors "${NC}${MAGENTA}${BOLD}${UNDERLINE}${1}${NC}" >&2
-  [ ! -z "${xtrc}" ] && set -x
+  [ -n "${xtrc}" ] && set -x
   return 0
 }
 
@@ -871,8 +871,8 @@ runLogProgress()
   addCleanupTrapCmd "${killph}"
   eval "$1"
   rc=$?
-  if [ ! -z "${SSH_TTY}" ]; then
-    chtag -r ${SSH_TTY}
+  if [ -n "${SSH_TTY}" ]; then
+    chtag -r "${SSH_TTY}"
   fi
   ${killph} 2> /dev/null # if the timer is not running, the kill will fail
   waitforpid ${ph}  # Make sure it's finished writing to screen
@@ -966,14 +966,14 @@ runInBackgroundWithTimeoutAndLog()
     kill -0 "${PID}" 2> /dev/null
     if [ $? != 0 ]; then
       wait "${PID}"
-      if [ ! -z "${SSH_TTY}" ]; then
-        chtag -r ${SSH_TTY}
+      if [ -n "${SSH_TTY}" ]; then
+        chtag -r "${SSH_TTY}"
       fi
       rc=$?
-      return "${rc}"
+      return ${rc}
     else
       sleep 1
-      n=$(expr ${n} + 1)
+      n=$(( n + 1))
     fi
   done
   kill -9 "${PID}" 2>/dev/null
@@ -1003,7 +1003,7 @@ printWarning()
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
   printColors "${NC}${WARNINGCOLOR}${BOLD}***WARNING: ${NC}${YELLOW}${1}${NC}" >&2
   [ -n "${xtrc}" ] && set -x
-  return 0
+  return 0;
 }
 
 printInfo()
@@ -1011,7 +1011,7 @@ printInfo()
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
   printColors "$1" >&2
   [ -n "${xtrc}" ] && set -x
-  return 0
+  return 0;
 }
 
 # Used to input sensitive data - turns off echo to the screen for the input
@@ -1023,14 +1023,14 @@ getInputHidden()
   addCleanupTrapCmd "stty echo"
   stty -echo
   read zopen_input
-  echo ${zopen_input}
+  echo "${zopen_input}"
   stty echo
 }
 
 getInput()
 {
   read zopen_input
-  echo ${zopen_input}
+  echo "${zopen_input}"
 }
 
 printElapsedTime()
@@ -1038,7 +1038,7 @@ printElapsedTime()
   printType=$1
   functionName=$2
   startTime=$3
-  elapsedTime=$((${SECONDS} - ${startTime}))
+  elapsedTime=$((SECONDS - startTime))
 
   elapsedTimeOutput="${functionName} completed in ${elapsedTime} seconds."
 
@@ -1058,6 +1058,7 @@ processConfig()
   if [ -z "${ZOPEN_ROOTFS}" ]; then
     relativeRootDir="$(cd "$(dirname "$0")/../.." > /dev/null 2>&1 && pwd -P)"
     if [ -f "${relativeRootDir}/etc/zopen-config" ]; then
+      # shellcheck source=/dev/null
       . "${relativeRootDir}/etc/zopen-config"
     else
       printError "Source the zopen-config prior to running $0."
@@ -1074,7 +1075,7 @@ checkIfConfigLoaded()
     errorMessage="Certificate at ${ZOPEN_CA} could not be accessed. Ensure zopen init has run and zopen-config has been sourced."
   fi
 
-  if [ ! -z "${errorMessage}" ]; then
+  if [ -n "${errorMessage}" ]; then
     if [ -r "${mydir}/../../../etc/zopen-config" ]; then
       relativeConfigDir="$(cd "$(dirname "${mydir}")/../../etc/" > /dev/null 2>&1 && pwd -P)"
       errorMessage="${errorMessage} Run '. ${relativeConfigDir}/zopen-config'  or add it to your .profile."
@@ -1086,28 +1087,28 @@ checkIfConfigLoaded()
 parseDeps()
 {
   dep="$1"
-  version=$(echo ${dep} | awk -F '[>=<]+' '{print $2}')
+  version=$(echo "${dep}" | awk -F '[>=<]+' '{print $2}')
   if [ -z "${version}" ]; then
     operator=""
-    dep=$(echo ${dep} | awk -F '[>=<]+' '{print $1}')
+    dep=$(echo "${dep}" | awk -F '[>=<]+' '{print $1}')
   else
-    operator=$(echo ${dep} | awk -F '[0-9.]+' '{print $1}' | awk -F '^[a-zA-Z]+' '{print $2}')
-    dep=$(echo ${dep} | awk -F '[>=<]+' '{print $1}')
+    operator=$(echo "${dep}" | awk -F '[0-9.]+' '{print $1}' | awk -F '^[a-zA-Z]+' '{print $2}')
+    dep=$(echo "${dep}" | awk -F '[>=<]+' '{print $1}')
     case ${operator} in
     ">=") ;;
     "=") ;;
     *) printError "${operator} is not supported." ;;
     esac
-    major=$(echo ${version} | awk -F. '{print $1}')
-    minor=$(echo ${version} | awk -F. '{print $2}')
+    major=$(echo "${version}" | awk -F. '{print $1}')
+    minor=$(echo "${version}" | awk -F. '{print $2}')
     if [ -z "${minor}" ]; then
       minor=0
     fi
-    patch=$(echo ${version} | awk -F. '{print $3}')
+    patch=$(echo "${version}" | awk -F. '{print $3}')
     if [ -z "${patch}" ]; then
       patch=0
     fi
-    prerelease=$(echo ${version} | awk -F. '{print $4}')
+    prerelease=$(echo "${version}" | awk -F. '{print $4}')
     if [ -z "${prerelease}" ]; then
       prerelease=0
     fi
@@ -1289,31 +1290,19 @@ checkWritable()
   fi
 }
 
-getReleaseLine()
+generateUUID() 
 {
-  jsonConfig="${ZOPEN_ROOTFS}/etc/zopen/config.json"
-  if [ ! -f "${jsonConfig}" ]; then
-    jq -r '.release_line' $jsonConfig
-  else
-    echo "STABLE"
-  fi
-}
-
-getRMProcs()
-{
-  jsonConfig="${ZOPEN_ROOTFS}/etc/zopen/config.json"
-  if [ ! -f "${jsonConfig}" ]; then
-    jq -r '.num_rm_procs' $jsonConfig
-  else
-    echo "5" # default
-  fi
+  date_part=$(date +%s)
+  random_part=$((RANDOM))
+  uuid="${date_part}-${random_part}"
+  echo "${uuid}"
 }
 
 isURLReachable() {
   url="$1"
   timeout=5
 
-  if curl -s --fail --max-time $timeout "$url" > /dev/null; then
+  if curlCmd -s --fail --max-time $timeout "$url" > /dev/null; then
     return 0
   else
     return 1
