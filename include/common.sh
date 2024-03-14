@@ -1369,6 +1369,145 @@ promptYesNoAlways() {
   return 0
 }
 
+getVersionedMetadata()
+{
+  printDebug "Specific version ${versioned} requested - checking existence and URL"
+  requestedMajor=$(echo "${versioned}" | awk -F'.' '{print $1}')
+  requestedMinor=$(echo "${versioned}" | awk -F'.' '{print $2}')
+  requestedPatch=$(echo "${versioned}" | awk -F'.' '{print $3}')
+  requestedSubrelease=$(echo "${versioned}" | awk -F'.' '{print $4}')
+  requestedVersion="${requestedMajor}\\\.${requestedMinor}\\\.${requestedPatch}\\\.${requestedSubrelease}"
+  printDebug "Finding URL for latest release matching version prefix: requestedVersion: ${requestedVersion}"
+  releasemetadata=$(/bin/printf "%s" "${releases}" | jq -e -r '. | map(select(.assets[].name | test("'${requestedVersion}'")))[0]')
+}
+
+getTaggedMetadata()
+{
+  printDebug "Explicit tagged version '${tagged}' specified. Checking for match"
+  releasemetadata=$(/bin/printf "%s" "${releases}" | jq -e -r '.[] | select(.tag_name == "'"${tagged}"'")')
+  printDebug "Use quick check for asset to check for existence of metadata for specific messages"
+  asset=$(/bin/printf "%s" "${releasemetadata}" | jq -e -r '.assets[0]')
+  if [ $? -ne 0 ]; then
+    printError "Could not find release tagged '${tagged}' in repo '${repo}'"
+  fi
+}
+
+getSelectMetadata()
+{
+  # As this is running within the generate... logic, a progress handler will have been started.
+  # This needs to be terminated before trying to write to screen
+  # shellcheck disable=SC2154
+  kill -HUP "${gigph}" 2>/dev/null # if the timer is not running, the kill will fail
+  waitforpid "${gigph}"  # Make sure it's finished writing to screen
+
+  # Explicitly allow the user to select a release to install; useful if there are broken installs
+  # as a known good release can be found, selected and pinned!
+  printDebug "List individual releases and allow selection"
+  i=$(/bin/printf "%s" "${releases}" | jq -r 'length - 1')
+  printInfo "Versions available for install:"
+  /bin/printf "%s" "${releases}" | jq --raw-output 'to_entries | map("\(.key): \(.value.tag_name) - \(.value.assets[0].name) [\( ( .value.assets[0].expanded_size|tonumber)*1000 / (1024 * 1024) | ceil | . / 1000)Mb]")[]'
+  printDebug "Getting user selection"
+  valid=false
+  while ! ${valid}; do
+    echo "Enter version to install (0-${i}): "
+    read selection < /dev/tty
+    if [ ! -z $(echo "${selection}" | sed -e 's/[0-9]*//') ]; then
+      echo "Invalid input, must be a number between 0 and ${i}"
+    elif [ "${selection}" -ge 0 ] && [ "${selection}" -le "${i}" ]; then
+      valid=true
+    fi
+  done
+  printVerbose "Selecting item ${selection} from array"
+  releasemetadata="$(/bin/printf "%s" "${releases}" | jq -e -r ".[${selection}]")"
+}
+
+getReleaseLineMetadata()
+{ 
+  printDebug "Install from release line '${releaseLine}' specified"
+  validatedReleaseLine=$(validateReleaseLine "${releaseLine}")
+  if [ -z "${validatedReleaseLine}" ]; then
+    printError "Invalid releaseline specified: '${releaseLine}'; Valid values: DEV or STABLE"
+  fi
+  printDebug "Finding latest asset on the release line"
+  releasemetadata="$(/bin/printf "%s" "${releases}" | jq -e -r '. | map(select(.tag_name | startswith("'${releaseLine}'")))[0]')"
+  printDebug "Use quick check for asset to check for existence of metadata"
+  asset="$(/bin/printf "%s" "${releasemetadata}" | jq -e -r '.assets[0]')"
+  if [ $? -ne 0 ]; then
+    printError "Could not find release-line ${releaseLine} for repo: ${repo}"
+  fi
+}
+
+calculateReleaseLineMetadata()
+{
+  printDebug "No explicit version/tag/releaseline, checking for pre-existing package&releaseline"
+  if [ -n "${installedReleaseLine}" ]; then
+    printDebug "Found existing releaseline '${installedReleaseLine}', restricting to only that releaseline"
+    validatedReleaseLine="${installedReleaseLine}"  # Already validated when stored
+  else 
+    printDebug "Checking for system-configured releaseline"
+    if [ -e "${ZOPEN_ROOTFS}/etc/zopen/config.json" ]; then
+      printDebug "Using v2 configuration: '${ZOPEN_ROOTFS}/etc/zopen/config.json}'"
+      sysrelline=$(jq -re '.release_line' "${ZOPEN_ROOTFS}/etc/zopen/config.json")
+    elif [ -e "${ZOPEN_ROOTFS}/etc/zopen/releaseline" ] ; then
+      printDebug "Using legacy file-based config"
+      sysrelline=$(awk ' {print toupper($1)}') < "${ZOPEN_ROOTFS}/etc/zopen/releaseline"
+    fi
+    printDebug "Validating value: ${sysrelline}"
+    validatedReleaseLine=$(validateReleaseLine "${sysrelline}")
+    if [ -n "${validatedReleaseLine}" ]; then
+      printDebug "zopen system configured to use releaseline '${sysrelline}'; restricting to that releaseline"
+    else
+      printWarning "zopen misconfigured to use an unknown releaseline of '${sysrelline}'; defaulting to STABLE packages"
+      printWarning "Set the contents of '${ZOPEN_ROOTFS}/etc/zopen/releaseline' to a valid value to remove this message"
+      printWarning "Valid values are: DEV | STABLE"
+      validatedReleaseLine="STABLE"
+    fi
+  fi
+
+  printDebug "Parsing releases: ${releases}"
+    # We have some situations that could arise
+    # 1. the port being installed has no releaseline tagging yet (ie. no releases tagged STABLE_* or DEV_*)
+    # 2. system is configured for STABLE but only has DEV stream available
+    # 3. system is configured for DEV but only has DEV stream available
+    # 4. the port being installed has got full releaseline tagging
+    # The issue could arise that the user has switched the system from DEV->STABLE or vice-versa so package
+    # stream mismatches could arise but in normal case, once a package is installed [that has releaseline tagging]
+    # then that specific releaseline will be used
+  printDebug "Finding any releases tagged with ${validatedReleaseLine} and getting the first (newest/latest)"
+  releasemetadata="$(/bin/printf "%s" "${releases}" | jq -e -r '. | map(select(.tag_name | startswith("'${validatedReleaseLine}'")))[0]')"
+
+  printDebug "Use quick check for asset to check for existence of metadata"
+  asset="$(/bin/printf "%s" "${releasemetadata}" | jq -e -r '.assets[0]')"
+  [ "${asset}" = "null" ] && asset="" # jq uses null, translate to sh's empty
+
+  if [ -n "${asset}" ]; then
+    # Case 4...
+    printVerbose "Found a specific '${validatedReleaseLine}' release-line tagged version; installing..."
+  else
+    # Case 2 & 3
+    printDebug "No releases on releaseline '${validatedReleaseLine}'; checking alternative releaseline"
+    alt=$(echo "${validatedReleaseLine}" | awk ' /DEV/ { print "STABLE" } /STABLE/ { print "DEV" }')
+    releasemetadata="$(/bin/printf "%s" "${releases}" | jq -e -r '. | map(select(.tag_name | startswith("'${alt}'")))[0]')"
+    printDebug "Use quick check for asset to check for existence of metadata"
+    asset="$(/bin/printf "%s" "${releasemetadata}" | jq -e -r '.assets[0]')"
+    [ "${asset}" = "null" ] && asset=""  # jq uses null, translate to sh's empty
+    if [ $? -eq 0 ]; then
+      printDebug "Found a release on the '${alt}' release line so release tagging is active"
+      if [ "DEV" = "${validatedReleaseLine}" ]; then
+        # The system will be configured to use DEV packages where available but if none, use latest
+        printInfo "No specific DEV releaseline package, using latest available"
+        releasemetadata="$(/bin/printf "%s" "${releases}" | jq -e -r ".[0]")"
+      else
+        printVerbose "The system is configured to only use STABLE releaseline packages but there are none"
+        printInfo "No release available on the '${validatedReleaseLine}' releaseline."
+      fi
+    else
+      # Case 1 - old package that has no release tagging yet (no DEV or STABLE), just install latest
+      printVerbose "Installing latest release"
+      releasemetadata="$(/bin/printf "%s" "${releases}" | jq -e -r ".[0]")"
+    fi
+  fi
+}
 
 parseRepoName()
 {
@@ -1379,6 +1518,46 @@ parseRepoName()
   versioned=$(echo "${fullname}" | cut -s -d '=' -f 2)
   tagged=$(echo "${fullname}" | cut -s -d '%' -f 2)
   printDebug "Name:${name};version:${versioned};tag:${tagged};repo:${repo}"
+}
+
+getPortMetaData(){
+  portRequested="$1"
+  invalidPortAssetFile="$2"
+  printDebug "Removing any version (%) or tag (#) suffixes fron '${portRequested}"
+  portName=$(echo "${portRequested}" | sed -e 's#%.*##' -e 's#=.*##')
+  validatedPort=$(echo "${repo_metadata}" | awk -vportName="${portName}" '$0 == portName {print}')
+  if [ -z "${validatedPort}" ]; then
+    echo "${portName}: no matching port found" >> "${invalidPortAssetFile}"
+    return 1
+  fi
+  parseRepoName "${portRequested}" # To set the various status flags below
+  getRepoReleases "${validatedPort}"
+  if [ -n "${versioned}" ]; then
+    getVersionedMetadata
+  elif [ -n "${tagged}" ]; then
+    getTaggedMetadata    
+  elif # shellcheck disable=SC2154
+       ${selectVersion}; then
+    getSelectMetadata
+  elif [ -n "${releaseLine}" ]; then  
+    getReleaseLineMetadata      
+  else
+    calculateReleaseLineMetadata
+  fi
+  if [ -z "${releasemetadata}" ]; then 
+    echo "${portName}: metadata could not be found" >> "${invalidPortAssetFile}"
+    return 1
+  fi
+  printDebug "Getting specific asset details using metadata: ${releasemetadata}"
+  if [ -z "${asset}" ] || [ "null" = "${asset}" ]; then
+    printDebug "Asset not found during previous logic; setting now"
+    asset=$(/bin/printf "%s" "${releasemetadata}" | jq -e -r '.assets[0]')
+  fi
+  if [ -z "${asset}" ]; then
+    echo "${portName} asset metadata could not be found" >> "${invalidPortAssetFile}"
+    return 1
+  fi
+  return 0
 }
 
 dedupStringList()
