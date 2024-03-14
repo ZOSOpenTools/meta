@@ -29,17 +29,17 @@ from the system to save space and prevent clutter.
 Usage: ${ME} [OPTION] [PACKAGE]
 
 Options:
-  --all             apply cleanup command to all applicable packages.
   -c, --cache  [PACKAGE ...]
                     cleans the downloaded package cache; packages will be
                     re-downloaded if needed.
   -d, --dangling    removes dangling symlinks from the zopen file system in
                     case of issues during package maintenance.
-  -h, --help, -?    display this help and exit.
   -m, --metadata    cleans and refreshes the metadata for zopen.
   -u, --unused [PACKAGE ...]
                     remove versions of PACKAGEs that are available as
                     alternatives, leaving only the currently active version.
+  --all             does all the above
+  -h, --help, -?    display this help and exit.
   -v, --verbose     run in verbose mode.
   --version         print version.
 
@@ -168,6 +168,14 @@ while [ $# -gt 0 ]; do
     ;;
   "--all")
     all=true
+    unused=true
+    dangling=true
+    cache=true
+    meta=true
+    cleanUnused
+    cleanDangling
+    cleanPackageCache
+    cleanMetadata
     ;;
   "-d" | "--dangling")
     unused=false
