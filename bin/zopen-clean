@@ -15,6 +15,7 @@ setupMyself()
     echo "Internal Error. Unable to find common.sh file to source." >&2
     exit 8
   fi
+  # shellcheck disable=SC1091
   . "${INCDIR}/common.sh"
 }
 setupMyself
@@ -116,6 +117,7 @@ cleanDangling()
     rm -f "${sl}"
   done
   ${killph} 2> /dev/null # if the timer is not running, the kill will fail
+  waitforpid ${ph}  # Make sure it's finished writing to screen
   syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_FILE}" "CLEAN" "cleanDangling" "zopen system at '${ZOPEN_ROOTFS}' scanned for dangling symlinks"
 }
 
@@ -210,7 +212,7 @@ done
 ${dangling} && cleanDangling && exit
 ${meta} && cleanMetadata
 
-getReposFromGithub
+getRepos
 if $all; then
   printVerbose "Generating complete list of all packages"
   # shellcheck disable=SC2154
