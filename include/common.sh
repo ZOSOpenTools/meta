@@ -1343,8 +1343,79 @@ promptYesOrNo() {
   return 0
 }
 
+promptYesNoAlways() {
+  message="$1"
+  skip=$2
+  if ! ${skip}; then
+    while true; do
+      printInfo "${message} [y/n/a]"
+      read answer < /dev/tty
+      answer=$(echo "${answer}" | tr '[A-Z]' '[a-z]')
+      case "${answer}" in
+       y|Y) return 0;;
+       n|N) return 1;;
+       a|A) ye
+      esac
 
-. ${INCDIR}/analytics.sh
+      if [ "y" = "${answer}" ] || [ "yes" = "${answer}" ]; then
+        return 0
+      fi
+      if [ "n" = "${answer}" ] || [ "no" = "${answer}" ]; then
+        return 1
+      fi
+
+    done
+  fi
+  return 0
+}
+
+
+parseRepoName()
+{
+  fullname="$1"
+  printDebug "Name to install: ${fullname}, parsing any version ('=') or tag ('%') that has been specified"
+  name=$(echo "${fullname}" | sed -e 's#[=%].*##')
+  repo="${name}"
+  versioned=$(echo "${fullname}" | cut -s -d '=' -f 2)
+  tagged=$(echo "${fullname}" | cut -s -d '%' -f 2)
+  printDebug "Name:${name};version:${versioned};tag:${tagged};repo:${repo}"
+}
+
+dedupStringList()
+{ delim="$1" && shift
+  str="$1"
+  echo "${str}"| awk -v delim="${delim}" '                                                                                                      
+    { dlm=""; for (i=1; i<=NF; i++) {if (!seen[$i]++) {printf "%s%s", dlm, $i};dlm=delim};print ""}'
+}
+
+spaceValidate(){
+  spaceRequiredBytes=$1
+  spaceRequiredMB=$(echo "scale=0; ${spaceRequiredBytes} / (1024 * 1024)" | bc)
+  availableSpaceMB=$(/bin/df -m "${ZOPEN_ROOTFS}" | sed "1d" | awk '{ print $3 }' | awk -F'/' '{ print $1 }')
+
+  printInfo "After this operation, ${spaceRequiredMB} MB of additional disk space will be used."
+  if [ "${availableSpaceMB}" -lt "${spaceRequiredMB}" ]; then
+    printWarning "Your zopen file-system (${ZOPEN_ROOTFS}) only has ${availableSpaceMB} MB of available space."
+  fi
+  if ! ${yesToPrompts} || [ "${availableSpaceMB}" -lt "${spaceRequiredMB}" ]; then
+    while true; do
+      printInfo "Do you want to continue? [y/n/a]"
+      read continueInstall < /dev/tty
+      case "${continueInstall}" in
+        "y") break;;
+        "n") mutexFree "zopen"; printInfo "Exiting..."; exit 0 ;;
+        "a") yesToPrompts=true; break;;
+        *) echo "?";;
+      esac
+    done
+  fi
+}
+
+getActivePackageDirs()
+{
+  (unset CD_PATH; cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
+}
+
 
 jqfunctions()
 {
@@ -1362,4 +1433,6 @@ jqfunctions()
   'def r(dp):.*pow(10;dp)|round/pow(10;dp)'
 }
 
+# shellcheck disable=SC1091
+. "${INCDIR}/analytics.sh"
 zopenInitialize
