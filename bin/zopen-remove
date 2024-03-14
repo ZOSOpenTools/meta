@@ -15,6 +15,7 @@ setupMyself()
     echo "Internal Error. Unable to find common.sh file to source." >&2
     exit 8
   fi
+  # shellcheck disable=SC1091
   . "${INCDIR}/common.sh"
 }
 setupMyself
@@ -51,11 +52,15 @@ HELPDOC
 removePackages()
 {
   pkglist=$*
-
+  processActionScripts "txn-pre"
+  # Create a temp file name to trigger the post-transaction action script
+  # triggering - run only if an action was taken (which creates the file)
+  runpostTxnActionScripts=$(mktempfile "txnpost" "run")
   echo "${pkglist}" | xargs | tr ' ' '\n' | sort | while read pkg; do
     printHeader "Removing package: ${pkg}"
+    processActionScripts "remove-pre"
     printInfo "- Checking status of package '${pkg}'"
-    if [ ! -f ${ZOPEN_PKGINSTALL}/${pkg}/${pkg}/.active ]; then
+    if [ ! -f "${ZOPEN_PKGINSTALL}/${pkg}/${pkg}/.active" ]; then
       printInfo "${NC}${YELLOW}Package '${pkg}' is not installed${NC}"
     else
       printInfo "- Away to remove '${pkg}',"
@@ -83,27 +88,34 @@ removePackages()
         if ${purge}; then
           printInfo "- Purging package"
           printVerbose "Checking if we are currently in a directory that is to be purged"
-          [ "${PWD##"${ZOPEN_PKGINSTALL}"/"${pkg}"/"${pkg}"}" != "${PWD}" ] && cd ${ZOPEN_PKGINSTALL}
-          rm -rf $(cd "${ZOPEN_PKGINSTALL}/${pkg}/${pkg}" && pwd -P)
-          syslog ${ZOPEN_LOG_PATH}/audit.log ${LOG_A} "${CAT_PACKAGE},${CAT_REMOVE}" "REMOVE" "removePackage" "Purging package:'${needle};version:${version};"
+          [ "${PWD##"${ZOPEN_PKGINSTALL}"/"${pkg}"/"${pkg}"}" != "${PWD}" ] && cd "${ZOPEN_PKGINSTALL}"
+          rm -rf "$(cd "${ZOPEN_PKGINSTALL}/${pkg}/${pkg}" && pwd -P)"
+          syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_PACKAGE},${CAT_REMOVE}" "REMOVE" "removePackage" "Purging package:'${needle};version:${version};"
           registerRemove "${pkg}" "${version}"
         else
-          printInfo "- Removing metadata file to mark uninstall"
+          printVerbose "- Removing metadata file to mark uninstall"
           rm -f "${ZOPEN_PKGINSTALL}/${pkg}/${pkg}/.active"
-          printInfo "- Breaking link from current to versioned"
+          printVerbose "- Breaking link from current to versioned"
           rm -f "${ZOPEN_PKGINSTALL}/${pkg}/${pkg}"
         fi
         printVerbose "Main symlink removed, removing dangling symlinks"
         unsymlinkFromSystem "${pkg}" "${ZOPEN_ROOTFS}" "${installedlinksfile}"
       fi
 
-      printInfo "- Removing profiled entry"
+      printVerbose "- Removing profiled entry"
       [ -d "${ZOPEN_ROOTFS}/etc/profiled/${pkg}" ] && rm -rf "${ZOPEN_ROOTFS}/etc/profiled/${pkg}"
 
+      removeFromInstallTracker "${pkg}"
+      processActionScripts "remove-post"
       syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_PACKAGE},${CAT_REMOVE}" "REMOVE" "removePackage" "Removed package:'${needle};version:${version};"
+      touch "${runpostTxnActionScripts}"
       printInfo "${NC}${GREEN}Successfully removed: ${pkg}${NC}"
     fi
   done
+  if [ -e "${runpostTxnActionScripts}" ]; then 
+    processActionScripts "txn-post"; 
+    rm "${runpostTxnActionScripts}"  
+  fi
 }
 
 # Main code start here
