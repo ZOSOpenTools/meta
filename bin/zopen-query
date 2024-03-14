@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh 
 #
 # Query utility for zopen community - https://github.com/zopencommunity
 #
@@ -15,6 +15,7 @@ setupMyself()
     echo "Internal Error. Unable to find common.sh file to source." >&2
     exit 8
   fi
+  # shellcheck source=/dev/null
   . "${INCDIR}/common.sh"
 }
 setupMyself
@@ -23,38 +24,42 @@ filter_implemented=false
 upgradeable_implemented=false
 whatprovides_implemented=false
 
-printSyntax()
-{
-  args=$*
-  echo "${ME} -  a utility for zopen community to query packages and repos."
-  echo ""
-  echo "Usage: ${ME} [OPTION] [VERB] [PACKAGE]"
-  echo "  VERB is the action to take, which is one of"
-  echo "    --list, --remote-search, --installed"
-  echo "  PACKAGE is a package, specified for --remote-search"
-  echo ""
-  echo "Verbs:"
-  echo "  -i, --installed  list installed zopen community."
-  echo "  --list           list all available zopen community."
-  echo "  --remote-search  regex match package against available zopen community"
+printHelp(){
+  cat << HELPDOC
+zopen query -  a utility for zopen community to query packages and repos.
+
+Usage: zopen query [OPTION] [VERB] [PACKAGE]
+
+Options:
+  -d, --details     include full details for listings
+  -i, --installed   list only installed z/OS Open Tools
+      --list        list all available z/OS Open Tools
+      --no-header   suppress the header for the output
+      --no-version  suppress version information, return package names
+      --remote-search
+                    regex match package against available packages
+      --verbose     run in verbose mode
+      --version     print version
+  -h,-?, --help     display this help and exit
+HELPDOC
+if ${filter_implemented}; then
+  echo "  --filter COLOR   apply COLOR (quality) filter."
+  echo "                   green: all pass, blue: most pass, yellow: some pass, red: no pass, gray: skipped"
+fi
 if ${upgradeable_implemented}; then
   echo "  --upgradeable    list packages where an upgrade is available."
 fi
 if ${whatprovides_implemented}; then
   echo "  -wp, --whatprovides  which installed package provided a file."
 fi
-  echo ""
-  echo "Options:"
-  echo "  -d, --details    include full details for listings."
-if ${filter_implemented}; then
-  echo "  --filter COLOR   apply COLOR (quality) filter."
-  echo "                   green: all pass, blue: most pass, yellow: some pass, red: no pass, gray: skipped"
-fi
-  echo "  --help           print this help"
-  echo "  --no-header,     suppress the header for the output."
-  echo "  --no-version,    suppress version information, return package names."
-  echo "  -v               run in verbose mode."
-  echo "  --version        print version"
+  cat << HELPDOC
+Examples:
+  zopen query
+                    queries
+
+Report bugs at https://github.com/ZOSOpenTools/meta/issues .
+
+HELPDOC
 }
 
 colorizepct()
@@ -306,6 +311,7 @@ noheader=false
 noversion=false
 localoption=true
 upgradeable=false
+list=false
 details=0
 needle=
 if [ $# -eq 0 ]; then
@@ -316,13 +322,13 @@ while [ $# -gt 0 ]; do
   printVerbose "Parsing option: $1"
   case "$1" in
   "--list")
-    list=1
+    list=true
     localoption=false
     ;;
   "-i" | "--installed")
     localoption=true
     installed=1
-    list=
+    list=true
     ;;
   "-wp" | "--whatprovides")
     localoption=true
@@ -355,17 +361,20 @@ while [ $# -gt 0 ]; do
   "-d" | "--details")
     details=1
     ;;
-  "-h" | "--h" | "-help" | "--help" | "-?" | "-syntax")
-    printSyntax "${args}"
+  "-h" | "--help" | "-?")
+    printHelp
     exit 0
     ;;
   "--version")
     zopen-version "${ME}"
     exit 0
     ;;
-  "-v" | "--v" | "-verbose" | "--verbose")
+  "--verbose")
     # shellcheck disable=SC2034
     verbose=true
+    ;;
+  "--xdebug")
+    set -x
     ;;
   -*)
     printError "Unknown option '$1'"
@@ -396,14 +405,26 @@ fi
 
 if ! ${localoption}; then
   # Retrieve all repositories
-  getReposFromGithub
+  getRepos
   grfgRc=$?
   [ 0 -ne "${grfgRc}" ] && exit "${grfgRc}"
   repoArray="${repo_results}"
 fi
 
-! ${upgradeable} || printDetailListEntries "${details}" "" 1
-[ -z "${remotesearch}" ] || printDetailListEntries "${details}" "${needle}" 0
-[ -z "${list}" ] || printDetailListEntries "${details}" "" 0
-[ -z "${installed}" ] || printInstalledEntries "${details}" "" 0
-[ -z "${whatprovides}" ] || whatProvides "${needle}"
+# Use dedicated zopen-list script for listing system packages, passing
+# appropriate parameters to mimic the old query behaviour
+if ${list}; then
+  if ${installed}; then
+    if [ "${details}" -eq 0 ]; then
+      (zopen list --installed)
+    else
+      (zopen list --installed --details --header)
+    fi
+  else
+    (zopen list )
+  fi
+else
+  ! ${upgradeable} || printDetailListEntries "${details}" "" 1
+  [ -z "${remotesearch}" ] || printDetailListEntries "${details}" "${needle}" 0
+  [ -z "${whatprovides}" ] || whatProvides "${needle}"
+fi
