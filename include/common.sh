@@ -1784,6 +1784,21 @@ getInstallFile()
   fi
 }
 
+extractMetadataFromPax()
+{
+  if ! pax -rf "$1" -s "%[^/]*/%/tmp/%" '*/metadata.json' ; then
+    if ! details=$(pax -rf "$1" -s "%[^/]*/%/tmp/%" '*/package.json'); then
+      printSoftError "Could not extract package metadata from file '$1'."
+      [ -n "${details}" ] && printSoftError "Details: ${details}"
+      exit 8
+    else
+      echo "/tmp/package.json"
+    fi
+  else
+    echo "/tmp/metadata.json"
+  fi
+}
+
 getActivePackageDirs()
 {
   (unset CD_PATH; cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
