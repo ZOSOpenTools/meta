@@ -1725,6 +1725,45 @@ spaceValidate(){
   fi
 }
 
+processRepoInstallFile(){
+  printVerbose "Beginning port installation"
+  mutexReq "zopen"
+  
+  processActionScripts "txn-pre"
+  if [ 0 -eq "$(echo "${installList}" | jq --raw-output '.installqueue| length')" ]; then
+    printInfo "- No packages to install"
+    return 0
+  fi
+
+  # shellcheck disable=SC2154
+  if ${fileinstall}; then
+    : 
+  else
+    spaceRequiredBytes=$(echo "${installList}" | jq --raw-output '.installqueue| map(.asset.size, .asset.expanded_size)| reduce .[] as $total (0; .+($total|tonumber))')
+    spaceValidate "${spaceRequiredBytes}"
+  fi
+
+  processActionScripts "txn-pre"
+  for installurl in $(echo "${installList}" | jq --raw-output '.installqueue |map( (.asset.url| sub(" ";"") ))| @sh'); do
+    printVerbose "Analysing :'${installurl}'"
+    installurl=$(echo "${installurl}" | tr -d "' ")
+    getInstallFile "${installurl}"
+    if $downloadOnly; then
+      continue
+    fi
+    installFile="${installurl##*/}"
+    if [ ! "${installFile%.zos.pax.Z}" = "${installFile}" ]; then
+      # Found zos.pax.Z format
+      installFromPax "${installFile}"
+    else
+      printError "Unrecognised install file format"
+    fi
+  done
+  processActionScripts "txn-post"
+  mutexFree "zopen"
+  printVerbose "Port installation complete"
+}
+
 getActivePackageDirs()
 {
   (unset CD_PATH; cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
