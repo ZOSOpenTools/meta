@@ -1,0 +1,311 @@
+#!/bin/sh
+#
+# List utility for z/OS Open Tools - https://github.com/ZOSOpenTools
+#
+
+#
+# All zopen-* scripts MUST start with this code to maintain consistency.
+#
+setupMyself()
+{
+  ME=$(basename $0)
+  MYDIR="$(cd "$(dirname "$0")" > /dev/null 2>&1 && pwd -P)"
+  INCDIR="${MYDIR}/../include"
+  if ! [ -d "${INCDIR}" ] && ! [ -f "${INCDIR}/common.sh" ]; then
+    echo "Internal Error. Unable to find common.sh file to source." >&2
+    exit 8
+  fi
+  # shellcheck source=/dev/null
+  . "${INCDIR}/common.sh"
+}
+setupMyself
+
+printHelp(){
+  cat << HELPDOC
+zopen list -  list information about local packages
+
+Usage: zopen list [OPTION] [VERB] [PACKAGE]
+
+Options:
+  --available     lists all available z/OS Open Tools
+  --details       provide version information on packages
+  --full          provides more information about packages
+  --installed     list only installed z/OS Open Tools
+  --[no]header    output explanation header for columns
+  --verbose       run in verbose mode
+  --version       print version
+  --version-info  lists version information for installed packages when
+                  combined with the --installed option              
+  -h,-?, --help     display this help and exit
+
+Examples:
+  zopen list --installed
+                    list packages installed on the system
+
+Report bugs at https://github.com/ZOSOpenTools/meta/issues .
+
+HELPDOC
+}
+text_center()
+{
+  if [ $# -lt 2 ]; then
+    echo "$1"
+    return
+  fi
+  echo "$1" | awk -v strlen="$2" \
+    '{spc = strlen - length;padding = int(spc / 2);pad = spc - padding;printf "%*s%s%*s\n", pad, "", $0, padding, ""}'
+}
+
+text_padrightr() {
+  padchar="${3:- }" # Default to space char
+  echo "" | awk -v str="$1" -v n="$2" -v pc="$padchar"  \
+      'function padr(n,acc, c){
+          if (++acc>=n) return c;
+          return c padr(n, acc, c);
+        }
+        BEGIN{ print str padr(n,0,pc);}
+      '
+}
+
+
+listLatestForInstalled()
+{
+  wpackage=20
+  wversion=12
+  wrelease=14
+  wtag=36
+  # wurl=11 Note required unless additional columns added
+  if ${header}; then
+    printf "${NC}${UNDERLINE}%-${wpackage}s%-${winstalled}s%-${wtag}s%-${wdownload}s%-${wexpsz}s%-${wqual}s${NC}\n" \
+        "$(text_center "Package")" "$(text_center "Version")" "$(text_center "Release")"\
+        "$(text_center "Tag Name")" "$(text_center "Download URL")" 
+  fi
+  pdb="${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json"
+  installed=$(zopen list --installed | awk -v ORS=',' '{print "\""$0"\""}')
+  installed="[${installed%,}]" # wrap in a JSON array and strip any trailing ',' char
+  jq --raw-output --argjson installed "${installed}" \
+    "$(jqfunctions) .release_data| 
+    to_entries |sort_by(.key) | .[] | 
+    .key as \$key | 
+    select( \$installed | index(\$key)) |
+    .value[0].assets[0] as \$va | 
+    \$va.url as \$url | 
+    (\$url | match(\".*-([^-]*).([0-9]{8}_[0-9]{6}).zos.pax.Z\").captures) as \$caps |
+    \$caps[0].string as \$version |
+    \$caps[1].string as \$release |
+    .value[0].tag_name as \$tn |
+    pr(\$key;\"@\";${wpackage}) +
+     pr(\$version;\"@\"; ${wversion}) +
+     pr(\$release;\"@\"; ${wrelease}) +
+     pr(\$tn;\"@\";${wtag}) +
+     \$url " 
+      "${JSON_CACHE}" | sed 's/@/ /g'
+}
+
+listAvailablePackages()
+{
+  downloadJSONCache
+  wpackage=20
+  wversion=23
+  winstalled=10
+  wtag=36
+  wrellne=12
+  wdownload=10
+  wexpsz=10
+  wqual=7
+  if ${urlinclude}; then
+    wurl=6
+    urltext="URL"
+  else
+    wurl=0
+    urltext=""
+  fi
+  if ${header}; then
+    if ${details} || ${full}; then
+      printf "${NC}${UNDERLINE}%-${wpackage}s%-${winstalled}s%-${wtag}s%-${wdownload}s%-${wexpsz}s%-${wqual}s%-${wurl}s${NC}\n" \
+          "$(text_center "Package")" "$(text_center "Installed")" "$(text_center "Latest Tag")"\
+          "$(text_center "Download size")" "$(text_center "Disk usage")" "$(text_center "Quality")" \
+          "$(text_center "${urltext}")"
+
+    else
+      printf "${NC}${UNDERLINE}%-${wpackage}s%-${winstalled}s%-${wversion}s%-${wtag}s${NC}\n" \
+          "$(text_center "Package")" "$(text_center "Installed")" "$(text_center "Version")" "$(text_center "Latest Tag")"
+    fi  
+  fi
+  installed=$(zopen list --installed | awk -v ORS=',' '{print "\""$0"\""}')
+  installed="[${installed%,}]" # wrap in a JSON array and strip any trailing ',' char
+
+  if ${details} || ${full}; then
+    if ${urlinclude}; then
+      urltext='$url'
+    else
+      urltext=""
+    fi
+    jq --raw-output --argjson installed "${installed}" \
+        "$(jqfunctions) .release_data| 
+        to_entries |sort_by(.key) | .[] |
+        .key as \$key | 
+        .value[0].assets[0] as \$va |
+        \$va.url as \$url |
+        (\$url | match(\".*-([^-]*).[0-9]{8}_[0-9]{6}.zos.pax.Z\").captures[0].string) as \$version |
+        .value[0].tag_name as \$tn |
+        (if (\$installed | index(\$key)) then \"true\" else \"false\" end) as \$ins |
+        \$va.expanded_size as \$es |
+        \$va.size as \$ds |
+        (\$va.passed_tests | if (.==\"\") then \"0\" else . end | tonumber) as \$pt |
+        (\$va.total_tests | if (.==\"\") then \"99999\" else . end |tonumber) as \$tt |
+        ((\$pt/\$tt*100|r(2))|tostring + \"%\") as \$q |
+        pr(\$key;\"@\";${wpackage}) + 
+         c(\$ins;\"@\";${winstalled}) +
+         c(\$tn;\"@\";${wtag}) + 
+         c(\$ds;\"@\";${wdownload}) + 
+         c(\$es;\"@\";${wexpsz}) + 
+         c((\$q);\"@\";${wqual}) +
+         ${urltext} " \
+        "${JSON_CACHE}" | sed 's/@/ /g'
+  else
+    jq --raw-output  --argjson installed "${installed}" \
+        "$(jqfunctions) .release_data|
+        to_entries |sort_by(.key) | .[] |
+        .key as \$key |
+        .value[0].assets[0].url as \$url |
+        (\$url | match(\".*-([^-]*).[0-9]{8}_[0-9]{6}.zos.pax.Z\").captures[0].string) as \$version |
+        .value[0].tag_name as \$tn |
+        (if (\$installed | index(\$key)) then \"true\" else \"false\" end) as \$ins |
+        .value[0].assets[0] as \$va |
+        pr(\$key;\"@\";${wpackage}) +
+         c(\$ins;\"@\";${winstalled}) +
+          c(\$version;\"@\";${wversion}) +
+           c(\$tn;\"@\";${wtag}) " \
+        "${JSON_CACHE}" | sed 's/@/ /g'
+  fi    
+}
+
+listInstalledEntries()
+{
+  wpackage=20
+  wversion=26
+  wrelease=14
+  wrellne=12
+  wexpsz=12
+  wqual=8
+  if ${urlinclude}; then
+    wurl=6
+    urltext="URL"
+  else
+    wurl=0
+    urltext=""
+  fi
+  if ${header} && ${details}; then
+    if ${full}; then
+      printf "${NC}${UNDERLINE}%-${wpackage}s%-${wversion}s%-${wrelease}s%-${wrellne}s%-${wexpsz}s%-${wqual}s%-${wurl}s${NC}\n" \
+          "$(text_center "Package")" "$(text_center "Version")" "$(text_center "Release")" \
+          "$(text_center "Releaseline")" "$(text_center "Disk usage")" \
+          "$(text_center "Quality")" "$(text_center "${urltext}")"
+    else
+      printf "${NC}${UNDERLINE}%-${wpackage}s%-${wversion}s%-${wrelease}s${NC}\n" \
+          "$(text_center "Package")" "$(text_center "Version")" "$(text_center "Release")"
+    fi  
+  fi
+  pdb="${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json"
+  if ! [ -e "${pdb}" ]; then
+    printWarning "No package database found. Regenerating (subsequent calls will be faster)"
+    updatePackageDB
+  fi
+  if ${details}; then
+    if ${full}; then
+      jq --raw-output \
+        "$(jqfunctions) .[] |
+          keys[] as \$key |
+          .[\$key].product.test_status as \$ts |
+          pr(\$key;\"@\";${wpackage}) +
+           c((.[\$key].product?.version? // \"unknown\");\"@\";${wversion}) +
+           c((.[\$key].product?.release? // \"unknown\");\"@\";${wrelease}) +
+           c((.[\$key].product.buildline? // \"unknown\");\"@\";${wrellne}) +
+           c((.[\$key].product.size? // \"unknown\");\"@\";${wexpsz}) +
+           c(((if (\$ts? and (\$ts.total_tests | tonumber?) and (\$ts.total_success | tonumber?)) then (\$ts.total_success | tonumber) / (\$ts.total_tests | tonumber) else 0 end | .*100)| r(2) |tostring);\"@\";${wqual})" \
+        "${pdb}" | sed 's/@/ /g'
+    else
+      jq --raw-output \
+          "$(jqfunctions) .[] |
+          keys[] as \$key |
+          pr(\$key;\"@\";${wpackage}) +
+           c(.[\$key].product.version;\"@\";${wversion}) +
+           c(.[\$key].product.release;\"@\";${wrelease})" \
+          "${pdb}" | sed 's/@/ /g'
+    fi
+  else
+    jq --raw-output \
+        '[.[] | keys[] as $key | $key] | unique[] ' \
+        "${pdb}"
+  fi  
+}
+
+# Main code start here
+# Note that functions use padding chars of '@' to work round a quirk of jq in that
+# it will collapse repeated spaces into tab characters - which proves irksome when tryinh
+# to pad/format column layouts; '@' chars get post-processed into spaces
+
+verbose=false
+header=false
+details=false
+full=false
+installed=false
+urlinclude=false  # whether to include download url in output information
+versioninfo=false
+
+if [ $# -eq 0 ]; then
+  printError "No option provided"
+fi
+
+while [ $# -gt 0 ]; do
+  printVerbose "Parsing option: $1"
+  case "$1" in
+  "--available") available=true ;;
+  "--installed") installed=true ;;
+  "--details") details=true ;;
+  "--full") full=true; details=true ;;
+  "--header") header=true ;;
+  "--noheader") header=false ;;
+  "--url") urlinclude=true ;;
+  "--version-info") versioninfo=true ;;
+  "-h" | "--help" | "-?")
+    printHelp
+    exit 0
+    ;;
+  "--version")
+    zopen-version "${ME}"
+    exit 0
+    ;;
+  "--verbose")
+    # shellcheck disable=SC2034
+    verbose=true
+    ;;
+  "--xdebug")
+    set -x
+    ;;
+  -*)
+    printError "Unknown option '$1'"
+    ;;
+  *)
+    chosenRepos="${chosenRepos} $1"
+    ;;
+  esac
+  shift
+done
+
+checkIfConfigLoaded
+if ${installed}; then
+  if ${versioninfo}; then
+    listInstalledVerInfo
+  else
+    listInstalledEntries
+  fi
+  exit 0
+fi
+if ${available}; then
+  listAvailablePackages
+  exit 0
+fi
+
+
