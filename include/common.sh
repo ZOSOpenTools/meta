@@ -1764,6 +1764,26 @@ processRepoInstallFile(){
   printVerbose "Port installation complete"
 }
 
+getInstallFile()
+{
+  installurl="$1"
+  downloadToDir="${ZOPEN_ROOTFS}/var/cache/zopen"
+  if $downloadOnly; then
+    downloadToDir="."
+  else
+    downloadToDir="${ZOPEN_ROOTFS}/var/cache/zopen"
+  fi
+  if [ -e "${downloadToDir}/${installurl##*/}" ]; then
+    :
+  else
+    [ -e "${downloadToDir}" ] || mkdir -p "${downloadToDir}"
+    [ -w "${downloadToDir}" ] || printError "No permission to save install file to '${downloadToDir}'. Check permissions and retry command."
+    if ! runAndLog "cd ${downloadToDir} && curlCmd --no-progress-meter -L ${installurl} -O ${redirectToDevNull}"; then
+      printError "Could not download from ${installurl}. Correct any errors and potentially retry"
+    fi
+  fi
+}
+
 getActivePackageDirs()
 {
   (unset CD_PATH; cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
