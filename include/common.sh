@@ -1201,14 +1201,26 @@ syslog()
   echo "$(date +"%F %T") $(id | cut -d' ' -f1)::${module}:${type}:${categories}:${location}:${msg}" >> "${fd}"
 }
 
+getJSONCacheURL(){
+  activeRepo="${ZOPEN_ROOTFS}/etc/zopen/repos.d/active"
+  [ ! -e "${activeRepo}" ] && printError "Could not access repository configuration at '${activeRepo}'. Check file to ensure valid repository configuration or refresh default configuration with zopen init --refresh -y."
+
+  type=$(jq -r ".type" "${activeRepo}")
+  base=$(jq -r ".metadata_baseurl" "${activeRepo}")
+  filename=$(jq -r ".metadata_file" "${activeRepo}")
+  case "${type}" in
+    http|https) printf "%s://%s/%s" "${type}" "${base}" "${filename}";;
+    file)     printf "%s:%s/%s" "${type}" "${base}" "${filename}";;
+    *)        printError "Unsupported repository type '${type}'.";;
+  esac
+}
+
 downloadJSONCache()
 {
   if [ -z "${JSON_CACHE}" ]; then
-    cachedir="${ZOPEN_ROOTFS}/var/cache/zopen"
-    [ ! -e "${cachedir}" ] && mkdir -p "${cachedir}"
-    JSON_CACHE="${cachedir}/zopen_releases.json"
-    JSON_TIMESTAMP="${cachedir}/zopen_releases.timestamp"
-    JSON_TIMESTAMP_CURRENT="${cachedir}/zopen_releases.timestamp.current"
+    JSON_CACHE="${ZOPEN_ROOTFS}/var/cache/zopen/zopen_releases.json"
+    JSON_TIMESTAMP="${ZOPEN_ROOTFS}/var/cache/zopen/zopen_releases.timestamp"
+    JSON_TIMESTAMP_CURRENT="${ZOPEN_ROOTFS}/var/cache/zopen/zopen_releases.timestamp.current"
 
     # Need to check that we can read & write to the JSON timestamp cache files
     if [ -e "${JSON_TIMESTAMP_CURRENT}" ]; then
@@ -1221,26 +1233,30 @@ downloadJSONCache()
       [ ! -w "${JSON_CACHE}" ] || [ ! -r "${JSON_CACHE}" ] && printError "Cannot access cache at '${JSON_CACHE}'. Check permissions and retry request."
     fi
 
-    if ! curlout=$(curlCmd -L --no-progress-meter -I "${ZOPEN_JSON_CACHE_URL}" -o "${JSON_TIMESTAMP_CURRENT}"); then
-      printError "Failed to obtain json cache timestamp from ${ZOPEN_JSON_CACHE_URL}; ${curlout}"
+    jsonCacheURL=$(getJSONCacheURL)
+    if ! curlCmd -f -L -s -I "${jsonCacheURL}" -o "${JSON_TIMESTAMP_CURRENT}"; then
+      printError "Failed to obtain json cache timestamp from ${jsonCacheURL}."
     fi
     chtag -tc 819 "${JSON_TIMESTAMP_CURRENT}"
 
-    if [ -f "${JSON_CACHE}" ] && [ -f "${JSON_TIMESTAMP}" ] && grep -q 'ETag' "${JSON_TIMESTAMP_CURRENT}" && [ "$(grep 'ETag' "${JSON_TIMESTAMP_CURRENT}")" = "$(grep 'ETag' "${JSON_TIMESTAMP}")" ]; then
+    if [ -f "${JSON_CACHE}" ] \
+       && [ -f "${JSON_TIMESTAMP}" ] \
+       && [ "$(grep 'Last-Modified' "${JSON_TIMESTAMP_CURRENT}")" = "$(grep 'Last-Modified' "${JSON_TIMESTAMP}")" ]; then
+      # Metadata cache unchanged
       return
     fi
 
     printVerbose "Replacing old timestamp with latest."
     mv -f "${JSON_TIMESTAMP_CURRENT}" "${JSON_TIMESTAMP}"
 
-    if ! curlout=$(curlCmd -L --no-progress-meter -o "${JSON_CACHE}" "${ZOPEN_JSON_CACHE_URL}"); then
-      printError "Failed to obtain json cache from ${ZOPEN_JSON_CACHE_URL}; ${curlout}"
+    if ! curlCmd -f -L -s -o "${JSON_CACHE}" "${jsonCacheURL}"; then
+      printError "Failed to obtain json cache from '${jsonCacheURL}'"
     fi
     chtag -tc 819 "${JSON_CACHE}"
   fi
 
   if [ ! -f "${JSON_CACHE}" ]; then
-    printError "Could not download json cache from ${ZOPEN_JSON_CACHE_URL}"
+    printError "Could not download json cache from '${jsonCacheURL}"
   fi
 }
 
