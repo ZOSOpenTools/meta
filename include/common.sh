@@ -1416,6 +1416,34 @@ getActivePackageDirs()
   (unset CD_PATH; cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
 }
 
+processActionScripts()
+{
+  phase=$1
+  case $phase in
+    "install-post") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/postInstall";;
+    "remove-post") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/postRemove";;
+    "txn-post") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/postTransaction";;
+    "install-pre") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/preInstall";;
+    "remove-pre") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/preRemove";;
+    "txn-pre") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/preTransaction";;
+    *) printError "Internal error; invalid post action phase '${phase}'"
+  esac
+  (
+    [ -d "${scriptDir}" ] || return 0 # No script directory
+    unset CDPATH;
+    cd "${scriptDir}" || exit # the subshell
+    find . | while read scriptFile;
+    do
+      if [ ! -e "${scriptFile}" ]; then
+        printWarning "Script '${scriptDir}/${scriptFile}' is not executable. Check permissions"
+        continue
+      fi
+      # shellcheck disable=SC1090
+      . "${scriptFile}"
+    done
+  )
+}
+
 
 jqfunctions()
 {
