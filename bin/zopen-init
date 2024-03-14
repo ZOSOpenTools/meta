@@ -4,9 +4,11 @@
 ME=$(basename "$0")
 
 if [ -z "${utildir}" ]; then
+  # shellcheck disable=SC2155
   export utildir="$( cd "$(dirname "$0")" >/dev/null 2>&1 && pwd -P )"
 fi
 
+# shellcheck disable=SC2034
 ZOPEN_DONT_PROCESS_CONFIG=1
 #
 # All zopen-* scripts MUST start with this code to maintain consistency.
@@ -20,6 +22,7 @@ setupMyself()
     echo "Internal Error. Unable to find common.sh file to source." >&2
     exit 8
   fi
+  # shellcheck source=/dev/null
   . "${INCDIR}/common.sh"
 }
 setupMyself
@@ -44,20 +47,6 @@ Options:
   --[no]override-zos-tools
           Toggle default mode for overriding z/OS /bin tools
           in the zopen-config. Default is --nooverride-zos-tools
-
-  -f, --fs-layout <LAYOUT>
-          The filesystem structure to use for installed
-          packages on disk; packages will be installed to
-          this location under <zopen rootfs>.
-
-          <LAYOUT> should be one of:
-
-            usrlclz: /usr/local/zopen (default),
-            zopen: /usr/zopen,
-            prod: legacy zopen standard location,
-            ibm: /usr/lpp,
-            fhs: File Hierarchical Standard (/opt),
-            usrlcl: usr/local
 
   -h, -?, --help
           display this help and exit
@@ -89,23 +78,19 @@ Examples:
           interactively bootstrap a zopen environment
 
   zopen init --releaseline-dev
-          interactively bootstrap a zopen environment that
-          will use Development Releaseline packages
-
-  zopen --yes --append-to-profile --fs-layout fhs /zopen
-          non-interactively create a zopen environment at
-          location '/zopen' on disk, with packages installed
-          to '/zopen/opt'. The user's .profile will be
-          updated to source the configuration file at
-          '/zopen/etc/zopen-config' when new terminal
-          sessions start
+          interactively bootstrap a zopen environment that will use 
+          Development Releaseline packages
+  zopen --yes --append-to-profile /zopen
+          non-interactively create a zopen environment at location 
+          '/zopen' on disk, with packages installed to 
+          '/usr/local/zopen'. The user's .profile will be updated to 
+          source the configuration file at '/zopen/etc/zopen-config' 
+          when new terminal sessions start
 
 Report bugs at https://github.com/zopencommunity/meta/issues
 
 HELPDOC
 }
-
-args=$*
 
 
 # Constants
@@ -124,15 +109,10 @@ reinitExisting=false
 appendToProfile=false
 releaselineDev=false
 refresh=false
-fslayout="usrlclz"
 isCollectingStats=false
 isBot=false # used by jenkins, CI/CD
 while [ $# -gt 0 ]; do
   case "$1" in
-    "-f" | "--fs-layout" )
-      fslayout="$2"
-      shift
-      ;;
     "--re-init" )
       reinitExisting=true
       ;;
@@ -163,6 +143,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     "-v" | "--verbose")
+      # shellcheck disable=SC2034
       verbose=true
       ;;
     "--version")
@@ -170,6 +151,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     "--debug")
+      # shellcheck disable=SC2034
       debug=true
       ;;
     "--yes" | "-y")
@@ -279,24 +261,13 @@ init()
     printHeader "Initializing zopen framework"
   fi
 
-  printDebug "Validating input parameters"
-  case "${fslayout}" in
-    "usrlclz") zopen_pkginstall="usr/local/zopen"    ;;
-    "usrlcl")  zopen_pkginstall="usr/local"    ;;
-    "fhs")     zopen_pkginstall="opt"    ;;
-    "ibm")     zopen_pkginstall="usr/lpp"    ;;
-    "prod")    zopen_pkginstall="prod"    ;;
-    "zopen")   zopen_pkginstall="usr/zopen"    ;;
-    *) printError "${NC}${RED}The filesystem layout ${fslayout} is unrecognised" ;;
-  esac
-
   determineRootFileSystem
   determineStatsCollection
 
   if ! ${refresh} && ! ${reinitExisting}; then
     printInfo "- Binaries will be symlinked under \"${rootfs}/usr/local/bin\". Libraries will be symlinked under \"${rootfs}/usr/lib\""
-    printInfo "- Packages will be installed and maintained under the directory structure ${fslayout} (${rootfs}/${zopen_pkginstall}). To change, re-run with the -f <layout> option."
-    printInfo "- Collecting usage statistics: ${isCollectingStats}"
+    printInfo "- Packages will be installed and maintained under the directory '${rootfs}/${zopen_pkginstall}'."
+    printInfo "- Collecting usage statistics: $isCollectingStats"
   fi
 
   if ! promptYesOrNo "Do you want to continue?" ${yesToPrompts}; then
@@ -365,13 +336,34 @@ generateFileSystem()
   printVerbose "- Creating symbolic path for prod redirect files"
   [ -e "${rootfs}/usr/share/zopen/boot" ] || ln -s "${rootfs}/boot" "${rootfs}/usr/share/zopen/boot"
   [ -e "${rootfs}/etc/zopen" ] || mkdir -p "${rootfs}/etc/zopen"
-  echo "${zopen_pkginstall}" > "${rootfs}/etc/zopen/fstype"
-
+  
+  printVerbose "- Creating product installation location"
+  zopen_pkginstall="usr/local/zopen"
   [ -e "${rootfs}/${zopen_pkginstall}" ] || mkdir -p "${rootfs}/${zopen_pkginstall}"
   [ -e "${rootfs}/usr/share/zopen/prod" ] || ln -s "${rootfs}/${zopen_pkginstall}" "${rootfs}/usr/share/zopen/prod"
 
+  printVerbose "- Creating repository directory"
+  repodir="${rootfs}/etc/zopen/repos.d"
+  [ -e "${repodir}" ] || mkdir -p "${repodir}"
+
+  printVerbose "- Creating action scriptlet directories"
+  piaDir="${rootfs}/etc/zopen/scriptlets/preInstall"
+  [ -e "${piaDir}" ] || mkdir -p "${piaDir}"
+  piaDir="${rootfs}/etc/zopen/scriptlets/postInstall"
+  [ -e "${piaDir}" ] || mkdir -p "${piaDir}"
+  praDir="${rootfs}/etc/zopen/scriptlets/preRemove"
+  [ -e "${praDir}" ] || mkdir -p "${praDir}"
+  praDir="${rootfs}/etc/zopen/scriptlets/postRemove"
+  [ -e "${praDir}" ] || mkdir -p "${praDir}"
+  ptaDir="${rootfs}/etc/zopen/scriptlets/preTransaction"
+  [ -e "${ptaDir}" ] || mkdir -p "${ptaDir}"
+  ptaDir="${rootfs}/etc/zopen/scriptlets/postTransaction"
+  [ -e "${ptaDir}" ] || mkdir -p "${ptaDir}"
+
+  printVerbose "- Setting global root envvar"
+  ZOPEN_PKGINSTALL="${rootfs}/${zopen_pkginstall}"
   if [ "${ZOPEN_PKGINSTALL}" = "${rootfs}" ]; then
-    printError "Package install location is the zopen root location; this is not allowed. Exiting".
+    printError "Package install location is the zopen root location; this is not supported. Exiting".
   fi
   printVerbose "- Creating path for certificate lookups: ${rootfs}/${ZOPEN_CA_DIR}"
   [ -e "${rootfs}/${ZOPEN_CA_DIR}" ] || mkdir -p "${rootfs}/${ZOPEN_CA_DIR}"
@@ -425,7 +417,7 @@ generateJsonConfiguration()
     OVERRIDE_ZOS_TOOLS=false
   fi
 
-  if [ -z "$releaseLine" ]; then
+  if [ -z "${releaseLine}" ]; then
     if ${releaselineDev}; then
       releaseLine="DEV"
       printInfo "- Configured zopen to use development (DEV) releaseline packages where available"
@@ -458,6 +450,82 @@ zz
     fi
     mv -f "${ZOPEN_JSON_CONFIG}.working" "${ZOPEN_JSON_CONFIG}"
   fi
+  jq '.' "${jsonConfigWorking}" > "${jsonConfig}"
+  echo 1 > "${rootfs}/etc/zopen/autocacheclean"
+}
+
+generateDefaultRepository()
+{
+  # Check for existing repository definition - if present, use.
+  [ -e "${rootfs}/etc/zopen/repos.d/active" ] && return 0
+
+  # If there is no repository definition, generate a default to point to Github
+  [ ! -e "${rootfs}/etc/zopen/repos.d" ] && mkdir -p "${rootfs}/etc/zopen/repos.d"
+
+  if [ -z "${paxrepourl}" ]; then
+    paxrepourl="http://raw.githubusercontent.com/ZOSOpenTools/meta/main/docs/api/zopen_releases.json"
+  fi
+
+  repotype="${paxrepourl%://*}"
+  [ "${repotype}" = "${paxrepourl}" ] && printError "Unable to parse repository type from '${paxrepourl}'. Ensure valid format: <http|file>://<path to repo"
+  
+    case "${repotype}" in
+    http|https|file) printDebug "configuring repo type of: '${repotype}'";;
+    *) printError "Unsupported repository type of '${repotype}'"
+  esac
+  
+  repourl="${paxrepourl#*://}"
+  [ "${repourl}" = "${paxrepourl}" ] && printError "Unable to parse repository url from'${paxrepourl}'. Ensure valid format: <http|file>://<path to repo"
+
+  repometafile="${paxrepourl##*/}"
+  [ "${repometafile}" = "${paxrepourl}" ] && printError "Unable to parse repository file from '${paxrepourl}'. Ensure valid format: <http|file>://<path to repo"
+  
+  baserepourl="${repourl%/*}"
+  [ "${baserepourl}" = "${repourl}" ] && printError "Unable to parse repository file from '${paxrepourl}'. Ensure valid format: <http|file>://<path to repo"
+  
+  repoFile="${rootfs}/etc/zopen/repos.d/$(echo "${repourl}" | tr -d "/[:space:]._").json"
+
+  [ -e "${repoFile}" ] && mv "${repoFile}" "${repoFile}.$(date "+%C%m%d%H%M%S")"
+  cat << EOS >  "${repoFile}"
+{ 
+  "type": "${repotype}", 
+  "metadata_baseurl": "${baserepourl}", 
+  "metadata_file": "${repometafile}" 
+}
+EOS
+  (cd "${rootfs}/etc/zopen/repos.d" && ln -s "${repoFile}" "active")
+}
+
+generateDefaultScriptlets()
+{
+  printVerbose "- Generating man-db scriptlet"
+  cat << EOF > "${rootfs}/etc/zopen/scriptlets/postTransaction/man-db"
+#!/bin/false # Expects to be sourced in zopen-* scripts, not run directly!
+# Do not modify this file; changes will be overwritten automatically!
+if ! installed=\$(zopen list --installed | grep "^man-db\$"); then
+  : # No man-db installed
+else
+  echo "- Updating man-db database..."
+  if ! mandb >/dev/null 2>&1; then
+    printWarning "man-db update completed with non-zero return code."
+    printWarning "Re-run 'mandb' manually for additional information."
+  else 
+    echo "- Update of man-db complete."
+  fi
+fi
+EOF
+  printVerbose "- Generating zopen-clean scriptlet"
+  cat << EOF > "${rootfs}/etc/zopen/scriptlets/postTransaction/zopen-clean"
+#!/bin/false # Expects to be sourced in zopen-* scripts, not run directly!
+# Do not modify this file; changes will be overwritten automatically!
+[ -e "\${ZOPEN_ROOTFS}/etc/zopen/autocacheclean" ] || exit 0
+isactive=\$(cat "\${ZOPEN_ROOTFS}/etc/zopen/autocacheclean")
+if [ "\${isactive}" -eq 1 ]; then
+  echo "- Cleaning install cache..."
+  (zopen clean --cache >/dev/null 2>&1)
+  echo "- Cache cleaned."
+fi
+EOF
 }
 
 generateAnalyticsConfiguration()
@@ -556,6 +624,7 @@ updateBootstrappedTools() {
   toolInstall=$(runAndLog "${MYDIR}/zopen-install -y curl jq meta")
   toolInstall=$?
   [ ${toolInstall} -ne 0 ] && printError "Unable to install curl, jq and/or meta; see previous errors and retry the initilisation using the '--re-init' parameter"
+  # shellcheck disable=SC1090
   . "${configFile}"
 }
 
@@ -633,7 +702,9 @@ init
 generateFileSystem
 ! ${refresh} && installPrereqs
 generateJsonConfiguration
-generateZopenConfig
+generateDefaultRepository
 generateAnalyticsConfiguration
+generateDefaultScriptlets
+[ -e "${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json" ] || updatePackageDB
 ! ${refresh} && updateBootstrappedTools
 deinit
