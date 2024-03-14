@@ -1560,6 +1560,19 @@ getPortMetaData(){
   return 0
 }
 
+validateInstallList(){
+  installees="$1"
+  # shellcheck disable=SC2086 # Using set -f disables globbing
+  installees=$(set -f; echo ${installees} |awk  -v ORS=, -v RS=' ' '{$1=$1; sub(/[=%].*/,x); print "\""$1"\""}')
+  invalidPortList=$(jq -r --argjson needles "[${installees%%,}]" \
+    '.release_data| keys as $haystack | $needles | map(select(. as $needle | $haystack | index($needle)|not)) | .[]'  "${JSON_CACHE}")
+  if [ -n "${invalidPortList}" ]; then
+    printSoftError "The following ports could not be installed:"
+    printSoftError "    $(echo "${invalidPortList}" | awk -v OFS=' ' -v ORS=' ' '{$1=$1};1' )"
+    printError "Check port name(s), remove any extra 'port' suffixes and retry command."
+  fi
+}
+
 dedupStringList()
 { delim="$1" && shift
   str="$1"
