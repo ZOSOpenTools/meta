@@ -681,12 +681,11 @@ mergeIntoSystem()
   # Need '-S' to allow long symlinks
   cd "${processingDir}" && tar -S -cf "${tarfile}" "usr"
 
-  printDebug "Generating listing for remove processing (including main symlink)."
-  listing=$(tar tf "${processingDir}/${tarfile}" 2> /dev/null | sort -r)
+  printDebug "Generating listing for remove processing (including main symlink)"
   echo "Installed files:" > "${versioneddir}/.links"
-  echo "${listing}" >> "${versioneddir}/.links"
-
-  printDebug "Extracting tar to rootfs."
+  tar tf "${processingDir}/${tarfile}" 2> /dev/null| sort -r >> "${versioneddir}/.links"
+  
+  printDebug "Extracting tar to rootfs"
   cd "${processingDir}" && tar xf "${tarfile}" -C "${rootfs}" 2> /dev/null
 
   printDebug "Cleaning temp resources."
@@ -710,10 +709,10 @@ unsymlinkFromSystem()
   rootfs=$2
   dotlinks=$3
   newfilelist=$4
-  if [ -e "${dotlinks}" ]; then
-    printInfo "- Checking for obsoleted files in ${rootfs}/usr/ tree from ${pkg}"
 
+  if [ -e "${dotlinks}" ]; then
     if [ -e "${newfilelist}" ]; then
+      printInfo "- Checking for file differences switching versions of '${pkg}'"
       printDebug "Release change, so the list of changes to physically remove should be smaller"
       printDebug "Starting spinner..."
       progressHandler "spinner" "- Check complete" &
