@@ -894,7 +894,6 @@ progressAnimation()
   [ $# -eq 0 ] && printError "Internal error: no animation strings."
   animcnt=$#
   anim=1
-#  ansiline 0 0 "$1\n\c"
   while :; do
     spinloop 1000
     # Check for daemonization of this process (ie. orphaned and PPID=1)
@@ -1804,12 +1803,17 @@ installFromPax()
   pax="${downloadToDir}/$1"
   printDebug "Installing from '${pax}'"
   processActionScripts "install-pre"
+
   metadatafile=$(extractMetadataFromPax "${pax}")
   # Ideally we would use the following, but name does not always map
   # to the actual repo package name at present.  The repo name is in the
   # repo field so can extract from there instead
   #name=$(jq --raw-output '.product.name' "${metadatafile}")
   name=$(jq --raw-output '.product.repo | match(".*/ZOSOpenTools/(.*)port").captures[0].string' "${metadatafile}")
+
+  # Store current installation directory (if exists)
+  currentderef=$(cd "${ZOPEN_PKGINSTALL}/${name}/${name}" > /dev/null 2>&1 && pwd -P)
+
   paxname="${installurl##*/}"
   installdirname="${name}/${paxname%.pax.Z}" # Use full pax name as default
 
@@ -1871,7 +1875,7 @@ EOF
     printDebug "New version merged; checking for orphaned files from previous version"
     # This will remove any old symlinks or dirs that might have changed in an upgrade
     # as the merge process overwrites existing files to point to different version
-    unsymlinkFromSystem "${name}" "${ZOPEN_ROOTFS}" "${currentlinkfile}" "${baseinstalldir}/${name}/${name}/.links"
+    unsymlinkFromSystem "${name}" "${ZOPEN_ROOTFS}" "${currentderef}/.links" "${baseinstalldir}/${name}/${name}/.links"
   fi
 
   if ${setactive}; then
@@ -1880,6 +1884,12 @@ EOF
     installedList="${name} ${installedList}"
     syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_INSTALL},${CAT_PACKAGE}" "DOWNLOAD" "handlePackageInstall" "Installed package:'${name}';version:${downloadFileVer};install_dir='${baseinstalldir}/${installdirname}';"
     addToInstallTracker "${name}"    
+        # Some installation have installation caveats
+    installCaveat=$(jq -r '.product.install_caveats // empty' "${metadatafile}" 2>/dev/null)
+    if [ -n "$installCaveat" ]; then
+      printf "${name}:\n%s\n" "${installCaveat}">> "${ZOPEN_ROOTFS}/var/cache/install_caveats.tmp"
+    fi
+
     processActionScripts "install-post"
   fi
   printInfo "${NC}${GREEN}Successfully installed ${name}${NC}"
