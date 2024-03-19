@@ -1,0 +1,143 @@
+#!/bin/sh
+#
+# Audit utility for z/OS Open Tools - https://github.com/ZOSOpenTools
+#
+# All zopen-* scripts MUST start with this code to maintain consistency.
+#
+setupMyself()
+{
+  ME=$(basename $0)
+  MYDIR="$(cd "$(dirname "$0")" > /dev/null 2>&1 && pwd -P)"
+  INCDIR="${MYDIR}/../include"
+  if ! [ -d "${INCDIR}" ] && ! [ -f "${INCDIR}/common.sh" ]; then
+    echo "Internal Error. Unable to find common.sh file to source." >&2
+    exit 8
+  fi
+  . "${INCDIR}/common.sh"
+}
+setupMyself
+
+printHelp()
+{
+  cat << HELPDOC
+${ME} is a utility for z/OS Open Tools to check for vulnerabilities
+in your installed packages.
+
+Usage: ${ME} [OPTION] [PACKAGE]
+
+Options:
+  -v, --verbose     run in verbose mode.
+  --version         print version.
+
+Examples:
+  zopen audit       check for vulnerabilities in your installed packages
+
+Report bugs at https://github.com/ZOSOpenTools/meta/issues.
+
+HELPDOC
+}
+
+# Main code start here
+args=$*
+verbose=false
+debug=false
+
+while [ $# -gt 0 ]; do
+  printVerbose "Parsing option: $1"
+  case "$1" in
+  "-h" | "--help" | "-?")
+    printHelp "${args}"
+    exit 0
+    ;;
+  "--version")
+    zopen-version ${ME}
+    exit 0
+    ;;
+  "-v" | "--verbose")
+    verbose=true
+    ;;
+  "--debug")
+    # shellcheck disable=SC2034
+    verbose=true
+    # shellcheck disable=SC2034
+    debug=true
+    ;;
+  *)
+    printError "Invalid option specified."
+    ;;
+  esac
+  shift
+done
+
+JSON_VULNERABILITIES_URL="https://raw.githubusercontent.com/ZOSOpenTools/meta/main/docs/api/zopen_vulnerability.json"
+
+downloadCVEJSONCache()
+{
+  cachedir="${ZOPEN_ROOTFS}/var/cache/zopen"
+  [ ! -e "${cachedir}" ] && mkdir -p "${cachedir}"
+  JSON_CVE_CACHE="${cachedir}/zopen_vulnerability.json"
+
+  if ! curlout=$(curlCmd -L --fail --no-progress-meter -o "${JSON_CVE_CACHE}" "${JSON_VULNERABILITIES_URL}"); then
+    printError "Failed to obtain vulnerability json from ${JSON_VULNERABILITIES_URL}; ${curlout}"
+  fi
+  chtag -tc 819 "${JSON_CVE_CACHE}"
+}
+
+downloadCVEJSONCache
+
+if [ ! -f "${JSON_CVE_CACHE}" ]; then
+  printError "Vulnerability json cache file not found."
+  exit 1
+fi
+
+# Store vulnerability counts
+total_vulnerabilities=0
+low_vulnerabilities=0
+moderate_vulnerabilities=0
+high_vulnerabilities=0
+critical_vulnerabilities=0
+
+# Check for CVEs in all installed projects
+installedPackages=$(cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
+while IFS= read -r repo; do
+  repo="${repo##*/}"
+  pkghome="${ZOPEN_PKGINSTALL}/${repo}/${repo}"
+  if [ ! -e "${pkghome}/.active" ]; then
+    printVerbose "Symlink '${repo}' in '${ZOPEN_PKGINSTALL}' is not active; skipping"
+    continue
+  fi
+  printVerbose "Processing '${repo}'"
+
+  if [ ! -f "${pkghome}/metadata.json" ]; then
+    printVerbose "Skipping: Need the metadata.json to obtain the community's commit sha"
+    continue
+  fi
+
+  commit_sha=$(jq -er .product.community_commitsha "${pkghome}/metadata.json")
+  if [ $? -gt 0 ]; then
+    printVerbose "No community_commitsha in $repo"
+    continue
+  fi
+  # Fetch CVEs using the commit_sha from the vulnerabilities JSON
+  cves=$(jq -er 'if .["'$repo'"] then .["'$repo'"][] | select(.commit_sha == "'$commit_sha'") | .CVEs else empty end' $JSON_CVE_CACHE)
+  # Check if any CVEs are found
+  if [ $? -eq 0 ] && [ -n "${cves}" ]; then
+    printHeader "$(echo "${cves}" | jq -r .severity) severity found for $repo:"
+    echo "${cves}" | jq -r .id
+    echo "${cves}" | jq -r .details
+
+    total_vulnerabilities=$((total_vulnerabilities + $(echo "${cves}" | jq -r '.severity' | wc -l)))
+    low_vulnerabilities=$((moderate_vulnerabilities + $(echo "${cves}" | jq -r '.severity' | grep -c "LOW")))
+    moderate_vulnerabilities=$((moderate_vulnerabilities + $(echo "${cves}" | jq -r '.severity' | grep -c "MED")))
+    high_vulnerabilities=$((high_vulnerabilities + $(echo "${cves}" | jq -r '.severity' | grep -c "HIGH")))
+    critical_vulnerabilities=$((critical_vulnerabilities + $(echo "${cves}" | jq -r '.severity' | grep -c "CRITICAL")))
+  fi
+  break;
+done << EOF
+$(printf "%s\n" "$installedPackages" | xargs | tr ' ' '\n' | sort)
+EOF
+
+# Print summary
+echo ""
+printHeader "CVE Summary:"
+echo "${total_vulnerabilities} vulnerabilities (${low_vulnerabilities} low, ${moderate_vulnerabilities} moderate, ${high_vulnerabilities} high, ${critical_vulnerabilities} critical)"

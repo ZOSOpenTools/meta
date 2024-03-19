@@ -29,6 +29,7 @@ Usage: ${ME} [COMMAND] [OPTION] [PARAMETERS]...
 
 Command:
   alt               manage alternate versions of z/OS Open Tools packages.
+  audit             (beta) reports known vulnerabilities for the installed packages.
   build             builds the enclosing z/OS Open Tools git-cloned package.
   clean             cleans up your zopen environment.
   generate          generates a new zopen project.
@@ -54,6 +55,7 @@ Examples:
 
 SEE ALSO:
   zopen-alt(1)
+  zopen-audit(1)
   zopen-build(1)
   zopen-clean(1)
   zopen-generate(1)
@@ -79,7 +81,7 @@ version=false
 
 for arg in $*; do
   case "${arg}" in
-    "alt"|"build"|"clean"|"generate"|"init"|"install"|\
+    "alt"|"audit"|"build"|"clean"|"generate"|"init"|"install"|\
     "query"|"remove"|"update-cacert")
       subcmd="zopen-${arg}"
       ;;
