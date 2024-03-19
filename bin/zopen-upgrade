@@ -103,7 +103,7 @@ ${xdebug} && set -x && printVerbose "Enabled command execution trace"
 if [ -z "${chosenRepos}" ]; then
     printVerbose "No specific port to upgrade, upgrade all installed packages"
     printInfo "- Querying installed packages"
-    progressHandler "mirror" &
+    progressHandler "pkgcheck" &
     ph=$!
     killph="kill -HUP ${ph}"
     addCleanupTrapCmd "${killph}"

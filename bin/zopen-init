@@ -434,7 +434,8 @@ generateJsonConfiguration()
   "release_line": "${releaseLine}",
   "num_rm_procs": ${RM_FILEPROCS},
   "is_collecting_stats": ${isCollectingStats},
-  "override_zos_tools": ${OVERRIDE_ZOS_TOOLS}
+  "override_zos_tools": ${OVERRIDE_ZOS_TOOLS},
+  "autocacheclean": 1
 }
 zz
   else

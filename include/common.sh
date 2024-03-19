@@ -932,20 +932,19 @@ progressHandler()
     trapcmd="exit;"
     if [ -n "${completiontext}" ]; then
     ansiline
-      #trapcmd="/bin/echo \"\047[0A\047[10D\047[2K${completiontext}\n\c\"; ${trapcmd}"
       trapcmd="/bin/echo \"\047[10D\047[K${completiontext}\n\c\"; ${trapcmd}"
     else
-      #trapcmd="/bin/echo \"\047[0A\047[10D\c\"; ${trapcmd}"
       trapcmd="/bin/echo \"\047[10D\047[K\c\"; ${trapcmd}"
     fi
     # shellcheck disable=SC2064
     trap "${trapcmd}" HUP
     case "${type}" in
-      "spinner")  progressAnimation '-' '>' '|' '>' ;;
+      "spinner")  progressAnimation '-' '>' '|' '<' ;;
       "network")  progressAnimation '-----' '>----' '->---' '-->--' '--->-' '---->' '-----' '----<' '---<-' '--<--' '-<---' '<----' ;;
       "mirror")   progressAnimation '#______' '##_____' '#=#____' '#==#___' '#===#__' '#====#_' '#=====#' '#_====#' '#__===#' '#___==#' '#____=#' '#_____#' ;;
       "trash")    progressAnimation 'O________' '_O_______' '__O______' '___o_____' '____o____' '_____o___' '______.__' '_______._' '________.' ;;
       "linkcheck")progressAnimation '------>' '?----->' '-?---->' '--?--->' '---?-->' '----?->' '-----?>';;
+      "pkgcheck") progressAnimation '?###?###' '#?###?##' '##?###?#' '###?###?';;
       *)          progressAnimation '.' 'o' 'O' 'O' 'o' '.' ;;
     esac
   fi
