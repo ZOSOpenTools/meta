@@ -12,6 +12,9 @@ python3 tools/create_release_cache.py --verbose --output-file docs/api/zopen_rel
 #TODO: refactor
 #python3 tools/getbinaries.py
 
+# Generate a view of the newly released tools
+python3 tools/create_latest_release_doc.py --output docs/newly_released.md
+
 # Generate zopen API Reference
 mkdir -p docs/api
 mkdir -p docs/reference
