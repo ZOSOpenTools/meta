@@ -282,6 +282,7 @@ while read OUTMSG; do
 done < "${FIFO_PIPE_STDOUT}"
 [ -n "${FIFO_PIPE_STDOUT}" ] && [ -e "${FIFO_PIPE_STDOUT}" ] && rm -f "${FIFO_PIPE_STDOUT}"
 ${killph} 2>/dev/null  # if the timer is not running, the kill will fail
+waitforpid ${ph}  # Make sure it's finished writing to screen
 
 printVerbose "Grabbing pkginstall location from within promoted env"
 if [ -e "${promotefs}/etc/zopen/fstype" ]; then
@@ -311,6 +312,7 @@ if ! ${keepzopentooling}; then
     flecnt=$(expr ${flecnt} + 1)
   done
   ${killph} 2>/dev/null  # if the timer is not running, the kill will fail
+  waitforpid ${ph}  # Make sure it's finished writing to screen
   syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_ZOPEN}" "PROMOTE" "mainline" "meta tooling checked for and removed from promoted environment; ${flecnt} link(s) removed"
 fi
 
