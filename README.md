@@ -115,7 +115,7 @@ zopen list [--installed]
 With no parameters, will list the available packages against the currently installed versions; more usefully, using the `--installed` parameter lists the actually locally-installed packages rather than all potential packages
 
 ```bash
-zopen search <package>
+zopen query --remote-search <package>
 ```
 
 Searches the remote repository for the specified package, returning appropriate meta-data about the package if found.
