@@ -103,7 +103,7 @@ ${xdebug} && set -x && printVerbose "Enabled command execution trace"
 if [ -z "${chosenRepos}" ]; then
     printVerbose "No specific port to upgrade, upgrade all installed packages"
     printInfo "- Querying installed packages"
-    progressHandler "pkgcheck" &
+    progressHandler "pkgcheck" "- Query of installed packages complete" &
     ph=$!
     killph="kill -HUP ${ph}"
     addCleanupTrapCmd "${killph}"
@@ -164,8 +164,8 @@ if [ -z "${chosenRepos}" ]; then
   generateInstallGraph "${upgradeList}"
 else
   validateInstallList "${chosenRepos}"
-  printInfo "- Generating install graph"
-  progressHandler "spinner" &
+  printInfo "- Generating upgrade graph"
+  progressHandler "spinner" "- Generated upgrade graph" &
   ph=$!
   killph="kill -HUP ${ph}"
   addCleanupTrapCmd "${killph}"

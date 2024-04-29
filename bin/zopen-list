@@ -46,27 +46,6 @@ Report bugs at https://github.com/ZOSOpenTools/meta/issues .
 
 HELPDOC
 }
-text_center()
-{
-  if [ $# -lt 2 ]; then
-    echo "$1"
-    return
-  fi
-  echo "$1" | awk -v strlen="$2" \
-    '{spc = strlen - length;padding = int(spc / 2);pad = spc - padding;printf "%*s%s%*s\n", pad, "", $0, padding, ""}'
-}
-
-text_padrightr() {
-  padchar="${3:- }" # Default to space char
-  echo "" | awk -v str="$1" -v n="$2" -v pc="$padchar"  \
-      'function padr(n,acc, c){
-          if (++acc>=n) return c;
-          return c padr(n, acc, c);
-        }
-        BEGIN{ print str padr(n,0,pc);}
-      '
-}
-
 
 listLatestForInstalled()
 {
@@ -149,7 +128,7 @@ listAvailablePackages()
         \$va.url as \$url |
         (\$url | match(\".*-([^-]*).[0-9]{8}_[0-9]{6}.zos.pax.Z\").captures[0].string) as \$version |
         .value[0].tag_name as \$tn |
-        (if (\$installed | index(\$key)) then \"true\" else \"false\" end) as \$ins |
+        (if (\$installed | index(\$key)) then \"installed\" else \"available\" end) as \$ins |
         \$va.expanded_size as \$es |
         \$va.size as \$ds |
         (\$va.passed_tests | if (.==\"\") then \"0\" else . end | tonumber) as \$pt |
@@ -171,7 +150,7 @@ listAvailablePackages()
         .value[0].assets[0].url as \$url |
         (\$url | match(\".*-([^-]*).[0-9]{8}_[0-9]{6}.zos.pax.Z\").captures[0].string) as \$version |
         .value[0].tag_name as \$tn |
-        (if (\$installed | index(\$key)) then \"true\" else \"false\" end) as \$ins |
+        (if (\$installed | index(\$key)) then \"installed\" else \"available\" end) as \$ins |
         .value[0].assets[0] as \$va |
         pr(\$key;\"@\";${wpackage}) +
          c(\$ins;\"@\";${winstalled}) +
@@ -182,6 +161,77 @@ listAvailablePackages()
 }
 
 listInstalledEntries()
+{
+  wpackage=20
+  wversion=26
+  wrelease=14
+  wrellne=12
+  wexpsz=12
+  wqual=8
+  if ${urlinclude}; then
+    wurl=6
+    urltext="URL"
+  else
+    wurl=0
+    urltext=""
+  fi
+  if ${header} && ${details}; then
+    if ${full}; then
+      printf "${NC}${UNDERLINE}%-${wpackage}s%-${wversion}s%-${wrelease}s%-${wrellne}s%-${wexpsz}s%-${wqual}s%-${wurl}s${NC}\n" \
+          "$(text_center "Package")" "$(text_center "Version")" "$(text_center "Release")" \
+          "$(text_center "Releaseline")" "$(text_center "Disk usage")" \
+          "$(text_center "Quality")" "$(text_center "${urltext}")"
+    else
+      printf "${NC}${UNDERLINE}%-${wpackage}s%-${wversion}s%-${wrelease}s${NC}\n" \
+          "$(text_center "Package")" "$(text_center "Version")" "$(text_center "Release")"
+    fi  
+  fi
+  pdb="${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json"
+  if ! [ -e "${pdb}" ]; then
+    printWarning "No package database found. Regenerating (subsequent calls will be faster)"
+    updatePackageDB
+  fi
+  if ${details}; then
+    if ${full}; then
+      jq --raw-output \
+        "$(jqfunctions) .[] |
+          keys[] as \$key |
+          .[\$key].product.test_status as \$ts |
+          pr(\$key;\"@\";${wpackage}) +
+           c((.[\$key].product?.version? // \"unknown\");\"@\";${wversion}) +
+           c((.[\$key].product?.release? // \"unknown\");\"@\";${wrelease}) +
+           c((.[\$key].product.buildline? // \"unknown\");\"@\";${wrellne}) +
+           c((.[\$key].product.size? // \"unknown\");\"@\";${wexpsz}) +
+           c(((  if (\$ts? and (\$ts.total_tests | tonumber?) and (\$ts.total_success | tonumber?)) \
+                 then (\$ts.total_success | tonumber) / (\$ts.total_tests | tonumber) \
+                 else 0 \
+                 end | .*100)| r(2) |tostring);\"@\";${wqual})" \
+        "${pdb}" | sed 's/@/ /g'
+    else
+      jq --raw-output \
+          "$(jqfunctions) .[] |
+          keys[] as \$key |
+          pr(\$key;\"@\";${wpackage}) +
+           c(.[\$key].product.version;\"@\";${wversion}) +
+           c(.[\$key].product.release;\"@\";${wrelease})" \
+          "${pdb}" | sed 's/@/ /g'
+    fi
+  elif ${versioninfo}; then
+    jq --raw-output \
+        "$(jqfunctions) .[] |
+          keys[] as \$key |
+          .[\$key].product.test_status as \$ts |
+          pr(\$key;\"@\";${wpackage}) +
+           c((.[\$key].product?.version? // \"unknown\");\"@\";${wversion})" \
+        "${pdb}" | sed 's/@/ /g'
+  else
+    jq --raw-output \
+        '[.[] | keys[] as $key | $key] | unique[] ' \
+        "${pdb}"
+  fi  
+}
+
+istInstalledEntries()
 {
   wpackage=20
   wversion=26
@@ -296,11 +346,7 @@ done
 
 checkIfConfigLoaded
 if ${installed}; then
-  if ${versioninfo}; then
-    listInstalledVerInfo
-  else
-    listInstalledEntries
-  fi
+  listInstalledEntries
   exit 0
 fi
 if ${available}; then

@@ -98,8 +98,11 @@ HELPDOC
 RM_FILEPROCS=5 #TODO: adjust based on number of online cpus on system
 
 # Boostrap pax files
-CURL_PAX_LOCATION="packages/curl-8.4.0.20231011_155722.zos.pax.Z"
-JQ_PAX_LOCATION="packages/jq-1.6.20230720_160648.zos.pax.Z"
+CURL_PAX="curl-8.4.0.20231011_155722.zos.pax.Z"
+JQ_PAX="jq-1.6.20230720_160648.zos.pax.Z"
+PKG_DIR="packages"
+CURL_PAX_LOCATION="${PKG_DIR}/${CURL_PAX}"
+JQ_PAX_LOCATION="${PKG_DIR}/${JQ_PAX}"
 
 verbose=false
 isHostIBM=false
@@ -574,29 +577,32 @@ installPrereqs()
 {
   printHeader "Installing zopen pre-requisites"
   printVerbose "- Check for shipped curl pax"
+  cachedir="${rootfs}/var/cache/zopen"
   curlpax="$CURL_PAX_LOCATION"
 
   curllcn=$(findrev "${MYDIR}" "${curlpax}")
   echo "${curllcn}/${curlpax}"
   if [ -e "${curllcn}/${curlpax}" ]; then
     printVerbose "- Found ${curlpax}. Adding to zopen cache to install as bootstrap"
-    cp -f "${curllcn}/${curlpax}" "${rootfs}/var/cache/zopen"
+    cp -f "${curllcn}/${curlpax}" "${cachedir}"
   else
     printError "Could not locate curl pax in the zopen cache"
   fi
   printVerbose "- Expanding curl to bootstrap dir..."
-  cachedir="${rootfs}/var/cache/zopen"
   basecurlpax=$(basename ${curlpax})
   [ -e "${cachedir}/${basecurlpax}" ] || printError "Could not locate bootstrap curl pax."
-  paxrc=$(pax -rf "${cachedir}/${basecurlpax}" -s##${rootfs}/boot/#)
-
+ 
+  if ! pax -rf "${cachedir}/${basecurlpax}" -s##${rootfs}/boot/# ; then
+    printError "Unable to unpax bootstrapped version of jq. Review any previous error messages and re-run zopen init."
+  fi
+  
   printVerbose "- Check for shipped jq pax"
   jqpax="$JQ_PAX_LOCATION"
 
   jqlcn=$(findrev "${MYDIR}" "${jqpax}")
   if [ -e "${jqlcn}/${jqpax}" ]; then
     printVerbose "- Found ${jqpax}. Adding to zopen cache to install as bootstrap"
-    cp -f "${jqlcn}/${jqpax}" "${rootfs}/var/cache/zopen"
+    cp -f "${jqlcn}/${jqpax}" "${cachedir}"
   else
     printError "${jqpax} not found"
   fi
@@ -604,8 +610,10 @@ installPrereqs()
   cachedir="${rootfs}/var/cache/zopen"
   basejqpax=$(basename ${jqpax})
   [ -e "${cachedir}/${basejqpax}" ] || printError "Could not locate bootstrap jq pax."
-  paxrc=$(pax -rf "${cachedir}/${basejqpax}" -s##${rootfs}/boot/#)
-
+  if ! pax -rf "${cachedir}/${basejqpax}" -s##${rootfs}/boot/# ; then
+    printError "Unable to unpax bootstrapped version of jq. Review any previous error messages and re-run zopen init."
+  fi
+  
   # Need to source the .env file from within the actual curl directory and cannot
   # spawn sub-process otherwise no access to environment from this script so run inline
   printVerbose "Sourcing environment to trigger any setup required for packages"
@@ -715,6 +723,6 @@ generateJsonConfiguration
 generateDefaultRepository
 generateAnalyticsConfiguration
 generateDefaultScriptlets
-[ -e "${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json" ] || updatePackageDB
 ! ${refresh} && updateBootstrappedTools
+[ -e "${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json" ] || updatePackageDB
 deinit

@@ -247,7 +247,7 @@ printInfo "- Promoting from '${rootfs}' to '${promotefs}'..."
 printDebug "Generating temporary pipe"
 FIFO_PIPE_STDOUT=$(mktempfile "" ".pipe")
 
-progressHandler "spinner" "- promote complete" &
+progressHandler "spinner" "- Promoted from '${rootfs}' to '${promotefs}'." &
 ph=$!
 killph="kill -HUP ${ph}"
 addCleanupTrapCmd "${killph}"

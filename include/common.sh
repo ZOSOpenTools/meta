@@ -5,13 +5,17 @@
 
 zopenInitialize()
 {
-  # Create the cleanup pipeline and exit handler
-  trap "cleanupFunction" EXIT INT TERM QUIT HUP
+  # Create the cleanup pipeline and exit handler - the export grabs the
+  # program exit code (for EXIT) or the signal otherwise to return from
+  # the program (rather than the return code from the functions in the
+  # trap handler)
+  trap "eval export exitrc=\$?" EXIT INT TERM QUIT HUP
   defineEnvironment
   defineANSI
   if [ -z "${ZOPEN_DONT_PROCESS_CONFIG}" ]; then
     processConfig
   fi
+  # shellcheck disable=SC2034
   ZOPEN_ANALYTICS_JSON="${ZOPEN_ROOTFS}/var/lib/zopen/analytics.json"
   ZOPEN_JSON_CACHE_URL="https://raw.githubusercontent.com/zopencommunity/meta/main/docs/api/zopen_releases.json"
   ZOPEN_JSON_CONFIG="${ZOPEN_ROOTFS}/etc/zopen/config.json"
@@ -19,6 +23,8 @@ zopenInitialize()
 
 addCleanupTrapCmd(){
   newcmd=$1
+  # Command Trace MUST be disabled as the output from this can become
+  # interleaved with output when calling zopen sub-processes.
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
   # Small timing window if the script is killed between the creation
   # and removal of the temporary file; would be easier if zos sh
@@ -27,27 +33,42 @@ addCleanupTrapCmd(){
   # and run in the subshell before returning trap handler(s)!?!
   tmpscriptfile="clean.tmp"
   trap > "${tmpscriptfile}" 2>&1 && script=$(cat "${tmpscriptfile}")
-  rm "${tmpscriptfile}"
   if [ -n "${script}" ]; then
     for trappedSignal in "EXIT" "INT" "TERM" "QUIT" "HUP"; do
-      newtrapcmd=$(echo "${script}" | while read trapcmd; do
-	       sigcmd=$(echo "${trapcmd}" | zossed "s/trap -- \"\(.*\)\" ${trappedSignal}.*/\1/")
-	       [ "${sigcmd}" = "${trapcmd}" ] && continue
-	       printf "%s;%s 2>/dev/null" "${sigcmd}" "${newcmd}" | tr -s ';'
-         break
-      done
+      newtrapcmd=$(
+        echo "${script}" | while read trapcmd; do
+	        sigcmd=$(echo "${trapcmd}" | 
+              zossed "s/trap -- \"\(.*\)\" ${trappedSignal}.*/\1/")
+          # No match/replace in sed, then sigcmd remains unchanged
+	        [ "${sigcmd}" = "${trapcmd}" ] && continue
+          # There was a match, so sigcmd contains the string of commands
+          # to run for the trap. Need to remove the exit command (which 
+          # returns the exit code) and ensure it is last
+          # Note that eval is used to run commands with potentially
+          # embedded variables (like the return code capture/return)
+          prfx="eval exit "
+          sigcmd=$(echo "${sigcmd}" |awk -v prfx="$prfx" '
+              BEGIN{ FS=";"; OFS=";" } 
+              {
+                for (i=1; i<=NF; i++){
+                  if (substr($i, 1, length(prfx)) != prfx) {
+                    printf "%s%s", sep, $i; sep="$OFS" 
+                  }
+                }
+              } 
+              END{ printf "\n" }'
+          )
+	        printf "%s;%s 2>/dev/null;eval exit \${exitrc}" "${sigcmd}" "${newcmd}" | tr -s ';'
+          break
+        done
       )
       if [ -n "${newtrapcmd}" ]; then
         trap -- "${newtrapcmd}" "${trappedSignal}"
       fi
     done
+    rm "${tmpscriptfile}" 2>/dev/null
   fi
   [ -n "${xtrc}" ] && set -x
-}
-
-cleanupFunction()
-{
-  :
 }
 
 # getParentProcess
@@ -138,6 +159,7 @@ mktempfile()
     mktempfile "$1" "${suffix}" # recurse and try again
   else
     echo "${tempfile}"
+    addCleanupTrapCmd "rm -rf ${tempfile}"
   fi
 }
 
@@ -389,6 +411,16 @@ defineANSI()
   CRSRHIDE="${ESC}[?25l"
   # shellcheck disable=SC2034
   CRSRSHOW="${ESC}[?25h"
+  # shellcheck disable=SC2034
+  CRSRPL="${ESC}[1F"   # Move to start of previous line
+  # shellcheck disable=SC2034
+  CRSRUP="A"
+  # shellcheck disable=SC2034
+  CRSRDOWN="B"
+  # shellcheck disable=SC2034
+  CRSRRIGHT="C"
+  # shellcheck disable=SC2034
+  CRSRLEFT="D"
 
   # Color-type codes, needs explicit terminal settings
   if [ ! "${_BPX_TERMPATH-x}" = "OMVS" ] && [ -z "${NO_COLOR}" ] && [ ! "${FORCE_COLOR-x}" = "0" ] && [ -t 1 ] && [ -t 2 ]; then
@@ -453,19 +485,20 @@ ansimove()
 {
   deltax=$1
   deltay=$2
+
   movestr=""
   if [ -n "${deltax}" ]; then
     if [ "${deltax}" -gt 0 ]; then
-      movestr="${ESC}[${deltax}C"
+      movestr="${ESC}[${deltax}${CRSRRIGHT}"
     elif [ "${deltax}" -lt 0 ]; then
-      movestr="${ESC}[$(expr "${deltax}" \* -1)D"
+      movestr="${ESC}[$(expr "${deltax}" \* -1)${CRSRLEFT}"
     fi
   fi
   if [ -n "${deltay}" ]; then
     if [ "${deltay}" -gt 0 ]; then
-      movestr="${movestr}${ESC}[${deltay}B"
+      movestr="${movestr}${ESC}[${deltay}${CRSRDOWN}"
     elif [ "${deltay}" -lt 0 ]; then
-      movestr="${movestr}${ESC}[$(expr "${deltay}" \* -1)A"
+      movestr="${movestr}${ESC}[$(expr "${deltay}" \* -1)${CRSRUP}"
     fi
   fi
   /bin/echo "${movestr}\c"
@@ -480,7 +513,7 @@ getScreenCols()
   elif [ ! -z "${COLUMNS}" ]; then
     echo "${COLUMNS}"
   else
-    echo "$(tput cols)"
+    tput cols
   fi
 }
 
@@ -516,6 +549,27 @@ findrev()
 strtrim()
 {
   echo "$1" | zossed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+text_center()
+{
+  if [ $# -lt 2 ]; then
+    echo "$1"
+    return
+  fi
+  echo "$1" | awk -v strlen="$2" \
+    '{spc = strlen - length;padding = int(spc / 2);pad = spc - padding;printf "%*s%s%*s\n", pad, "", $0, padding, ""}'
+}
+
+text_padrightr() {
+  padchar="${3:- }" # Default to space char
+  echo "" | awk -v str="$1" -v n="$2" -v pc="$padchar"  \
+      'function padr(n,acc, c){
+          if (++acc>=n) return c;
+          return c padr(n, acc, c);
+        }
+        BEGIN{ print str padr(n,0,pc);}
+      '
 }
 
 defineEnvironment()
@@ -714,8 +768,7 @@ unsymlinkFromSystem()
     if [ -e "${newfilelist}" ]; then
       printInfo "- Checking for file differences switching versions of '${pkg}'"
       printDebug "Release change, so the list of changes to physically remove should be smaller"
-      printDebug "Starting spinner..."
-      progressHandler "spinner" "- Check complete" &
+      progressHandler "spinner" "- Checked for file differences switching versions of '${pkg}'" &
       ph=$!
       killph="kill -HUP ${ph}"
       addCleanupTrapCmd "${killph}"
@@ -751,8 +804,7 @@ unsymlinkFromSystem()
       addCleanupTrapCmd "rm -rf ${tempDirFile}"
       printDebug "Using temporary file ${tempDirFile}"
       printInfo "- Checking ${nfiles} potentially obsolete file links"
-      printDebug "Starting spinner..."
-      progressHandler "linkcheck" "- Complete" &
+      progressHandler "linkcheck" "- Checked ${nfiles} potentially obsolete file links" &
       ph=$!
       killph="kill -HUP ${ph}"
       addCleanupTrapCmd "${killph}"
@@ -860,11 +912,11 @@ runLogProgress()
     printInfo "- Running"
   fi
   if [ -n "$3" ]; then
-    completeText="$3"
+    completeText="- $3"
   else
-    completeText="Complete"
+    completeText="- Complete"
   fi
-  progressHandler "spinner" "- ${completeText}" &
+  progressHandler "spinner" "${completeText}" &
   ph=$!
   killph="kill -HUP ${ph}"
   addCleanupTrapCmd "${killph}"
@@ -904,8 +956,7 @@ progressAnimation()
     [ "${ppid}" -eq 1 ] && kill INT "${ppid}" >/dev/null 2>&1
     anim=$((anim + 1))
     [ ${anim} -gt ${animcnt} ] && anim=1
-    ansiline -10 0 "$(getNthArrayArg "${anim}" "$@")"
-    ansimove -10 0
+    /bin/echo "${ESC}[1F${ESC}[0k$(getNthArrayArg "${anim}" "$@")"
   done
 }
 
@@ -917,29 +968,35 @@ getNthArrayArg ()
 
 waitforpid()
 {
-while kill -0 "$1" >/dev/null 2>&1; do
-  sleep 1
-done
+  while kill -0 "$1" >/dev/null 2>&1; do
+    sleep 1
+  done
 }
 
 progressHandler()
 {
- # if [ ! "${_BPX_TERMPATH-x}" = "OMVS" ] && [ -z "${NO_COLOR}" ] && [ ! "${FORCE_COLOR-x}" = "0" ] && [ -t 1 ] && [ -t 2 ]; then
+ 
+  if [ -z "${-%%*x*}" ]; then
+    # Command trace is active so any progress animation 
+    # writing to screen will interleave, making things cluttered.
+    # Sleep for 1s (to allow the caller to setup signal handling) and exit
+    sleep 1
+    exit 0
+  fi
   if ${ANSION}; then
-    [ -z "${-%%*x*}" ] && set +x # Disable -x debug if set for this process
     type=$1
     completiontext=$2 # Custom end text (when the process is complete)
     trapcmd="exit;"
     if [ -n "${completiontext}" ]; then
-    ansiline
-      trapcmd="/bin/echo \"\047[10D\047[K${completiontext}\n\c\"; ${trapcmd}"
+      trapcmd="/bin/echo \"${CRSRSHOW}${CRSRPL}${ERASELINE}${CRSRPL}${ERASELINE}${completiontext}\n\c\"; ${trapcmd}"
     else
-      trapcmd="/bin/echo \"\047[10D\047[K\c\"; ${trapcmd}"
+      trapcmd="/bin/echo \"${CRSRSHOW}${CRSRPL}${ERASELINE}\c\"; ${trapcmd}"
     fi
     # shellcheck disable=SC2064
     trap "${trapcmd}" HUP
+    /bin/echo "${CRSRHIDE}"
     case "${type}" in
-      "spinner")  progressAnimation '-' '>' '|' '<' ;;
+      "spinner")  progressAnimation '-' '/' '|' '\\' ;;
       "network")  progressAnimation '-----' '>----' '->---' '-->--' '--->-' '---->' '-----' '----<' '---<-' '--<--' '-<---' '<----' ;;
       "mirror")   progressAnimation '#______' '##_____' '#=#____' '#==#___' '#===#__' '#====#_' '#=====#' '#_====#' '#__===#' '#___==#' '#____=#' '#_____#' ;;
       "trash")    progressAnimation 'O________' '_O_______' '__O______' '___o_____' '____o____' '_____o___' '______.__' '_______._' '________.' ;;
@@ -991,7 +1048,6 @@ printError()
   printColors "${NC}${RED}${BOLD}***ERROR: ${NC}${RED}${1}${NC}" >&2
   [ -n "${xtrc}" ] && set -x
   mutexFree "zopen" # prevent lock from lingering around after an error
-  cleanupFunction
   exit 4
 }
 
@@ -1578,7 +1634,7 @@ createDependancyGraph(){
     return 0
   fi
   printDebug "Adding dependencies to install graph"
-  addToInstallGraph "${invalidPortAssetFile}" "${missing}"
+  addToInstallGraph "dependancy" "${invalidPortAssetFile}" "${missing}"
   # Recurse in case the now-installing dependencies themselves have dependencies
   # Recursive dependencies should not break as the initial package will have been
   # marked for installation
@@ -1588,12 +1644,13 @@ createDependancyGraph(){
 # addToInstallGraph
 # Finds appropriate metadata for the specified port(s) and
 # includes that in the installation file
-# inputs: $1 the file to use for validated ports
+# inputs: $1 if the install list comes from dependency analysis
 #         $2 an error file for outputing failures
 #         $* requested list of packages to install
 # return: 0  for success (output of pwd -P command)
 #         8  if error
 addToInstallGraph(){
+  installtype=$1 && shift
   invalidPortAssetFile=$1 && shift 
   pkgList="$1"
   printDebug "Adding pkgList to install graph"
@@ -1602,7 +1659,7 @@ addToInstallGraph(){
       continue
     fi
     ## Merge asset into output file - note the lack of inline file edit hence the mv
-    installList=$(echo "${installList}" | jq ".installqueue += [{\"portname\":\"${validatedPort}\", \"asset\":${asset}}]")
+    installList=$(echo "${installList}" | jq ".installqueue += [{\"portname\":\"${validatedPort}\", \"asset\":${asset}, \"installtype\":\"${installtype}\"}]")
   done
   if [ -e "${invalidPortAssetFile}" ]; then
     printSoftError "The following ports cannot be installed: "
@@ -1651,7 +1708,7 @@ generateInstallGraph(){
   # tempfiles could be created depending on dependency graph depth
   invalidPortAssetFile=$(mktempfile "invalid" "port")
   addCleanupTrapCmd "rm -rf ${invalidPortAssetFile}"
-  addToInstallGraph "${invalidPortAssetFile}" "${portsToInstall}"
+  addToInstallGraph "install" "${invalidPortAssetFile}" "${portsToInstall}"
   if  
     # shellcheck disable=SC2154
     ${doNotInstallDeps}; then
@@ -1666,10 +1723,12 @@ generateInstallGraph(){
 pruneGraph()
 {
   printDebug "Pruning entries in graph if already installed"
+  # shellcheck disable=SC2154
   if "${reinstall}"; then 
     # Reinstall packages if they are already installed - no prune needed
     return 0
   fi
+  # shellcheck disable=SC2154
   if "${downloadOnly}"; then
     # Download the pax files, even if already installed as they are not 
     # being reinstalled so no prune required
@@ -1690,7 +1749,7 @@ pruneGraph()
         '.installqueue |=
           map(
             select(.asset.url |
-              capture(".*/ZOSOpenTools/(?<name>[^/]*)port.*-(?<ver>[^-]*)\\.(?<rel>\\d{8}_\\d{6}?)\\.zos\\.pax\\.Z$") |.rel as $rel | .name as $name |
+              capture(".*/(?<name>.*)-(?<ver>[^-]*)\\.(?<rel>\\d{8}_\\d{6}?)\\.zos\\.pax\\.Z$") |.rel as $rel | .name as $name |
               $installees | map(
                 .|capture("(?<iname>[^@]*)@=@(?<irel>\\d{8}_\\d{6}?)$")|.iname as $iname | .irel as $irel |
                 ($iname+"-"+$irel) == ($name+"-"+$rel)
@@ -1737,6 +1796,32 @@ processRepoInstallFile(){
   if ${fileinstall}; then
     : 
   else
+    if ! ${quiet} >/dev/null 2>&1; then
+      xIFS=$IFS
+      IFS=' '
+      hdr=false
+      for installee in $(echo "${installList}" | jq --raw-output '.installqueue | map( (select(.installtype=="install") | .portname| sub(" ";"") ))| @sh'); do
+        installee=$(echo "${installee}" |tr -d "\'" )
+        [ -z "${installee}" ] && continue
+        if ! ${hdr}; then
+          printHeader "Installing the following packages:"
+          hdr=true
+        fi
+        printInfo "${installee}"
+
+      done
+      hdr=false
+      for dependee in $(echo "${installList}" | jq --raw-output '.installqueue | map( (select(.installtype=="dependancy") | .portname| sub(" ";"") ))| @sh'); do
+        dependee=$(echo "${dependee}" |tr -d "\'" )
+        [ -z "${dependee}" ] && continue
+        if ! ${hdr}; then
+          printHeader "Dependent packages to install:"
+          hdr=true
+        fi
+        printInfo "${dependee}"
+      done
+      IFS=${xIFS}
+    fi
     spaceRequiredBytes=$(echo "${installList}" | jq --raw-output '.installqueue| map(.asset.size, .asset.expanded_size)| reduce .[] as $total (0; .+($total|tonumber))')
     spaceValidate "${spaceRequiredBytes}"
   fi
@@ -1826,7 +1911,7 @@ installFromPax()
   fi
 
   # shellcheck disable=SC2154
-  if ! runLogProgress "pax -rf ${pax} -p p ${paxredirect} ${redirectToDevNull}" "Expanding ${pax}" "Expanded"; then
+  if ! runLogProgress "pax -rf ${pax} -p p ${paxredirect} ${redirectToDevNull}" "Expanding ${pax}" "Expanded ${pax}"; then
     printSoftError "Unexpected errors during unpaxing, package directory state unknown"
     printError "Use zopen alt to select previous version to ensure known state"
   fi
@@ -1943,11 +2028,13 @@ updatePackageDB()
   fi
   pkgdirs=$(getActivePackageDirs)
   for pkgdir in ${pkgdirs}; do
-    if [ ! -e "${ZOPEN_PKGINSTALL}/${pkgdir}/metadata.json" ]; then
-      printWarning "No metadata.json found in '${ZOPEN_PKGINSTALL}/${pkgdir}'. Bad package install?"
+    metadataFile="${ZOPEN_PKGINSTALL}/${pkgdir}/metadata.json"
+    if [ ! -e "${metadataFile}" ]; then
+      printVerbose "Falling back to filesystem analysis"
+      printWarning "No metadata.json found in '${ZOPEN_PKGINSTALL}/${pkgdir}'. Old package install?"
       continue
     fi
-    metadata=$(cat "${ZOPEN_PKGINSTALL}/${pkgdir}/metadata.json")
+    metadata=$(cat "${metadataFile}")
     if [ ! -e "${pdb}" ]; then
       echo "[]" > "${pdb}"
     fi

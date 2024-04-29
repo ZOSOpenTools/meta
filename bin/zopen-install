@@ -80,6 +80,7 @@ args=$*
 verbose=false
 debug=false
 xdebug=false
+quiet=false
 selectVersion=false
 # shellcheck disable=SC2034
 setActive=true
@@ -149,6 +150,10 @@ while [ $# -gt 0 ]; do
     "--xdebug")
       xdebug=true
     ;;
+    "--quiet")
+      # shellcheck disable=SC2034
+      quiet=true
+    ;;
   "--version")
     zopen-version "${ME}"
     exit 0
@@ -170,20 +175,19 @@ if ! ${all} && [ -z "${chosenRepos}" ]; then
   exit 4
 fi
 
-checkIfConfigLoaded
-
-#export SSL_CERT_FILE="${ZOPEN_CA}"
-#export GIT_SSL_CAINFO="${ZOPEN_CA}"
-#export CURL_CA_BUNDLE="${ZOPEN_CA}"
-
 # If any of the parameters passed in point to an existing file, then
 # the user is attempting to install a port directly from the file system
 # rather than a repo
 printDebug "Checking input parameters for actual files"
 potentials=$(echo "${chosenRepos}" | sed 's/@@/ /g')
 for installRepo in ${potentials}; do
-  [ -e "${installRepo}" ] && fileinstall=true && break
+  [ -f "${installRepo}" ] && fileinstall=true && break
 done
+
+if [ ! ${fileinstall} ]; then 
+  printVerbose "Using potentially remote files; ensuring configured for remte access"
+  checkIfConfigLoaded
+fi
 
 mutexReq "zopen" "zopen"
 if ${downloadOnly}; then
@@ -230,7 +234,7 @@ else
     validateInstallList "${installList}"
   fi
   printInfo "- Generating install graph"
-  progressHandler "spinner" &
+  progressHandler "spinner" "- Generated install graph" &
   gigph=$!
   killph="kill -HUP ${gigph}"
   addCleanupTrapCmd "${killph}"
