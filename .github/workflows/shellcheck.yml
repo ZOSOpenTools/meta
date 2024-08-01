@@ -1,0 +1,25 @@
+name: shellcheck
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - '**.sh'
+      - '**zopen-*'
+      - '**/zopen'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.sh'
+      - '**zopen-*'
+      - '**/zopen'
+
+jobs:
+  shellcheck-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Lint check
+        uses: azohra/shell-linter@v0.6.0
