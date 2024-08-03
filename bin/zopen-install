@@ -37,6 +37,7 @@ Options:
   --help                   print this help.
   --install-or-upgrade     installs the package if not installed,
                            or upgrades the package if installed.
+  --bypass-prereq-checks   Ignores pre-req checks
   --local-install          download and unpackage to current directory.
   --no-deps                do not install dependencies.
   --no-set-active          do not change the pinned version.
@@ -398,6 +399,30 @@ handlePackageInstall()
       printf "${NC}${HEADERCOLOR}${BOLD}${name}${NC}:\n ${installCaveat}\n" >> ${caveatsFile}
     fi
 
+    
+    systemPrereqs=$(jq -r '.product.system_prereqs // empty' "${metadataFile}" 2>/dev/null)
+    if ! $bypassPrereqs; then
+      if [ -z "${systemPrereqs}" ]; then
+        systemPrereqs="${systemPrereqs} zos24" # if empty, check for zos24
+      fi
+      if [ -n "$systemPrereqs" ]; then
+        if [ ! -d "$ZOPEN_SYSTEM_PREREQ_DIR" ]; then
+          printWarning "$ZOPEN_SYSTEM_PREREQ_DIR does not exist. You should upgrade meta. Bypassing prereq check."
+        fi
+        for prereq in $(echo "${systemPrereqs}" | xargs | tr ' ' '\n' | sort -u); do
+          printInfo "Checking system pre-req requirement $prereq"
+          if [ -e "$ZOPEN_SYSTEM_PREREQ_DIR/$prereq" ]; then
+            if ! /bin/sh -c "$ZOPEN_SYSTEM_PREREQ_DIR/$prereq"; then
+              printError "Failed system pre-req check \"$prereq\". If you wish to bypass this, install with --bypass-prereq-checks"
+            fi
+          else
+            printWarning "$ZOPEN_SYSTEM_PREREQ_DIR/$prereq does not exist. You should upgrade meta. Bypassing prereq check."
+          fi
+        done
+      fi
+    else
+      syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_PACKAGE},${CAT_INSTALL}" "BYPASS" "handlePackageInstall" "Bypassing prereq checks ${systemPrereqs} for '${name}'."
+    fi
     # Let the individual tools emit their own caveats
     #if [ -d "${baseinstalldir}/${installdirname}/altbin" ]; then
     #  printf "${NC}${HEADERCOLOR}${BOLD}${name}${NC}:\n${name} has tools provided under altbin/ that conflict with tools under /bin.\nTo use them set ZOPEN_TOOLSET_OVERRIDE and then re-source the zopen-config.\n" >> ${caveatsFile}
@@ -534,6 +559,7 @@ skipupgrade=false
 doNotInstallDeps=false
 all=false
 yesToPrompts=false
+bypassPrereqs=false
 chosenRepos=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -545,6 +571,9 @@ while [ $# -gt 0 ]; do
     ;;
   "--install-or-upgrade")
     installOrUpgrade=true # Upgrade package or install if not present
+    ;;
+  "--bypass-prereq-checks")
+    bypassPrereqs=true 
     ;;
   "--local-install")
     localInstall=true # Install the package into current directory

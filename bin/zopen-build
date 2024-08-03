@@ -123,6 +123,12 @@ Optional:
   ZOPEN_MAKE_OPTS             Options to pass to build program.
                               (defaults to '-j\${ZOPEN_NUM_JOBS}')
 
+Optional settings for installation:
+  ZOPEN_RUNTIME_DEPS          Runtime z/OS Open Tool dependencies to be installed
+                              alongside the tool.
+  ZOPEN_SYSTEM_PREREQ         System prerequisites, supply the name of the prereq
+                              scripts under $ZOPEN_SYSTEM_PREREQ_DIR
+
 Restricted Usage - only set in ports if necessary
   ZOPEN_DONT_ADD_ZOSLIB_DEP   Set to avoid adding zoslib as a dependency.
 
@@ -708,6 +714,16 @@ checkEnv()
 
     ZOPEN_REMOTE_URL="${ZOPEN_REMOTE_URL%.git}"
   fi
+
+  # Check for validity
+  if [ -n  "${ZOPEN_SYSTEM_PREREQ}" ]; then
+    echo "${ZOPEN_SYSTEM_PREREQ}" | xargs | tr ' ' '\n' | sort | while read prereq; do
+      if [ ! -f "$ZOPEN_SYSTEM_PREREQ_DIR/$prereq" ]; then
+        printError "ZOPEN_SYSTEM_PREREQ prereq \"${prereq}\" does not exist in \"$ZOPEN_SYSTEM_PREREQ_DIR/${prereq}\""
+      fi
+    done
+  fi 
+
 }
 
 setDepsEnv()
@@ -1686,6 +1702,7 @@ generateMetadataJSON()
   "community_commitsha": "${ZOPEN_PROJECT_HEAD_COMMIT_SHA}",
 zz
 
+#TODO: Clean this code up
 # Build Dependencies
 cat <<zz >> "${ZOPEN_INSTALL_DIR}/metadata.json"
   "build_dependencies": [
@@ -1726,10 +1743,29 @@ zz
 isFirst=false
 done
 
+# System Prerequisites
+cat <<zz >> "${ZOPEN_INSTALL_DIR}/metadata.json"
+  ],"system_prereqs": [
+zz
+
+isFirst=true
+echo "${ZOPEN_SYSTEM_PREREQ}" | xargs | tr ' ' '\n' | sort | while read prereq; do
+if ! $isFirst; then
+  echo "," >> "${ZOPEN_INSTALL_DIR}/metadata.json"
+fi
+cat <<zz >> "${ZOPEN_INSTALL_DIR}/metadata.json"
+      {
+        "name": "${prereq}"
+      }
+zz
+isFirst=false
+done
+
 cat <<zz >> "${ZOPEN_INSTALL_DIR}/metadata.json"
   ]
 }}
 zz
+
   if ! jq -e '.' "${ZOPEN_INSTALL_DIR}/metadata.json" 1>/dev/null 2>&1; then
     printError "${ZOPEN_INSTALL_DIR}/metadata.json contains invalid json: $(cat ${ZOPEN_INSTALL_DIR}/metadata.json)"
   fi

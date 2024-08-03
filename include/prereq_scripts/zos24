@@ -1,0 +1,20 @@
+#!/bin/sh
+check_system() {
+  PROCESSOR=$(/bin/uname -m)
+  RELEASE=$(/bin/uname -r | /bin/sed "s/\.[0-9]*//")
+  PLATFORM=$(/bin/uname -s)
+
+  # Checking if the platform is z/OS
+  if [ ! ${PLATFORM} = "OS/390" ]; then
+    echo "ERROR: This system is not a z/OS system"
+    exit 1
+  fi
+
+  # Checking if the OS is up to date
+  if [ ${RELEASE} -lt 27 ]; then
+      echo "ERROR: An OS level (${RELEASE}) lower than z/OS V2R4 (27) has been detected."
+      exit 1
+  fi
+}
+
+check_system

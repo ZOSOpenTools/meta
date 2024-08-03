@@ -1,0 +1,7 @@
+#!/bin/sh
+/bin/df /proc 2>/dev/null | /bin/grep -q "/proc.*PROC.*Available" 2>/dev/null
+if [ $? -gt 0 ]; then
+  echo "ERROR: The /proc filesystem is not set up on your system"
+  exit 1
+fi
+
