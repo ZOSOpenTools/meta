@@ -55,8 +55,8 @@ mergeNewVersion()
 {
   package="$1"
   newver="$2"
-  processActionScripts "txn-pre"
-  [ -z "${package}" ] && printError "Internal error; no packagename provided to merge."
+  processActionScripts "transactionpre"
+  [ -z "${package}" ] && printError "Internal error; no package name provided to merge."
   [ -d "${ZOPEN_PKGINSTALL}/${package}/${newver}" ] || printError "Version '${newver}' was not available to set as current"
   if [ -e "${ZOPEN_PKGINSTALL}/${package}/${package}" ]; then
     printVerbose "Removing main link"
@@ -85,7 +85,7 @@ mergeNewVersion()
     version=$(cat "${ZOPEN_PKGINSTALL}/${package}/${package}/.releaseinfo")
   fi
   syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_PACKAGE}" "ALT" "setAlt" "Set '${package}' to version:${version};"
-  processActionScripts "txn-post"
+  processActionScripts "transactionpost"
 }
 
 setAlt()

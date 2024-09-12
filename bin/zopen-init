@@ -48,6 +48,10 @@ Options:
           Toggle default mode for overriding z/OS /bin tools
           in the zopen-config. Default is --nooverride-zos-tools
 
+  --[no]override-zos-tools
+          Toggle default mode for overriding z/OS /bin tools
+          in the zopen-config. Default is --nooverride-zos-tools
+
   -h, -?, --help
           display this help and exit
 
@@ -95,7 +99,7 @@ HELPDOC
 
 # Constants
 # Number of rm processes to run in parallel
-RM_FILEPROCS=5 #TODO: adjust based on number of online cpus on system
+rm_fileprocs=5 #TODO: adjust based on number of online cpus on system
 
 # Boostrap pax files
 CURL_PAX="curl-8.4.0.20231011_155722.zos.pax.Z"
@@ -270,7 +274,7 @@ init()
   if ! ${refresh} && ! ${reinitExisting}; then
     printInfo "- Binaries will be symlinked under \"${rootfs}/usr/local/bin\". Libraries will be symlinked under \"${rootfs}/usr/lib\""
     printInfo "- Packages will be installed and maintained under the directory '${rootfs}/${zopen_pkginstall}'."
-    printInfo "- Collecting usage statistics: $isCollectingStats"
+    printInfo "- Collecting usage statistics: ${isCollectingStats}"
   fi
 
   if ! promptYesOrNo "Do you want to continue?" ${yesToPrompts}; then
@@ -349,20 +353,6 @@ generateFileSystem()
   repodir="${rootfs}/etc/zopen/repos.d"
   [ -e "${repodir}" ] || mkdir -p "${repodir}"
 
-  printVerbose "- Creating action scriptlet directories"
-  piaDir="${rootfs}/etc/zopen/scriptlets/preInstall"
-  [ -e "${piaDir}" ] || mkdir -p "${piaDir}"
-  piaDir="${rootfs}/etc/zopen/scriptlets/postInstall"
-  [ -e "${piaDir}" ] || mkdir -p "${piaDir}"
-  praDir="${rootfs}/etc/zopen/scriptlets/preRemove"
-  [ -e "${praDir}" ] || mkdir -p "${praDir}"
-  praDir="${rootfs}/etc/zopen/scriptlets/postRemove"
-  [ -e "${praDir}" ] || mkdir -p "${praDir}"
-  ptaDir="${rootfs}/etc/zopen/scriptlets/preTransaction"
-  [ -e "${ptaDir}" ] || mkdir -p "${ptaDir}"
-  ptaDir="${rootfs}/etc/zopen/scriptlets/postTransaction"
-  [ -e "${ptaDir}" ] || mkdir -p "${ptaDir}"
-
   printVerbose "- Setting global root envvar"
   ZOPEN_PKGINSTALL="${rootfs}/${zopen_pkginstall}"
   if [ "${ZOPEN_PKGINSTALL}" = "${rootfs}" ]; then
@@ -408,38 +398,64 @@ generateJsonConfiguration()
   jsonConfigWorking="${jsonConfig}.working"
 
   if [ -e "${jsonConfig}" ]; then
+    # isCollectingStats is set elsewhere
     releaseLine=$(jq -r '.release_line' "${jsonConfig}")
-    RM_FILEPROCS=$(jq -r '.num_rm_procs' "${jsonConfig}")
-    # note that is_collecting_stats is set earlier
+    rm_fileprocs=$(jq -r '.num_rm_procs' "${jsonConfig}")
     if [ -z "${OVERRIDE_ZOS_TOOLS}" ] && jq -er ".override_zos_tools" $jsonConfig >/dev/null; then
       OVERRIDE_ZOS_TOOLS=$(jq -r '.override_zos_tools' $jsonConfig)
     fi
+    autocacheclean=$(jq -r '.autocacheclean' "${jsonConfig}")
+    autopkgpurge=$(jq -r '.autopkgpurge' "${jsonConfig}")    
   fi
 
-  if [ -z "${OVERRIDE_ZOS_TOOLS}" ]; then
-    OVERRIDE_ZOS_TOOLS=false
+  if ${releaselineDev}; then
+    # Explicitly added on the command-line so use it
+    releaseLine="DEV"
+    printInfo "- Configured zopen to use development (DEV) releaseline packages where available"
   fi
-
-  if [ -z "${releaseLine}" ]; then
-    if ${releaselineDev}; then
-      releaseLine="DEV"
-      printInfo "- Configured zopen to use development (DEV) releaseline packages where available"
-    else
-      releaseLine="STABLE"
-      printInfo "- Configured zopen to use stable releaseline packages"
-    fi
-  fi
+  case "${releaseLine}" in
+    "") releaseLine="STABLE"
+        printInfo "- Configured zopen to use stable releaseline packages"
+        ;;
+    "STABLE"|"DEV") :;; # Use as-is
+    *) printWarning "Current value for release line '${releaseLine}' invalid. Defaulting to 'STABLE'."
+       releaseLine="STABLE"
+       ;;
+  esac
+  case "${autocacheclean:=1}" in
+    "0"|"1") :;; # Valid value
+    "null") autocacheclean=1  # Default to true; jq found no entry (new config)
+        ;;
+    *) showConfigParmWarning "autocacheclean" "${autocacheclean}" "0|1" "1"
+       autocacheclean=1
+       
+       ;;
+  esac
+  case "${autopkgpurge:=0}" in
+    "0"|"1") :;; # Valid value
+    "null")autopkgpurge=0  # Default to false; jq found no entry (new config)
+        ;;
+    *) showConfigParmWarning "autopkgpurge" "${autopkgpurge}" "0|1" "0"
+       autopkgpurge=0
+       ;;
+  esac
+  case "${OVERRIDE_ZOS_TOOLS}" in
+    "true"|"false") :;; # Valid value
+    "null") OVERRIDE_ZOS_TOOLS=false ;; # No entry in config file
+    *) OVERRIDE_ZOS_TOOLS=false ;; # Bad envvar / empty value in config
+  esac
 
   if [ ! -e "${jsonConfig}" ]; then
     printInfo "Generating global configuration"
-    cat <<zz > "${jsonConfig}"
-{
-  "release_line": "${releaseLine}",
-  "num_rm_procs": ${RM_FILEPROCS},
-  "is_collecting_stats": ${isCollectingStats},
-  "override_zos_tools": ${OVERRIDE_ZOS_TOOLS},
-  "autocacheclean": 1
-}
+    cat <<zz > "${jsonConfigWorking}"
+    {
+      "release_line": "${releaseLine:-STABLE}",
+      "num_rm_procs": ${rm_fileprocs:-5},
+      "is_collecting_stats": ${isCollectingStats},
+      "override_zos_tools": ${OVERRIDE_ZOS_TOOLS},
+      "autocacheclean": ${autocacheclean},
+      "autopkgpurge": ${autopkgpurge}
+    }
 zz
   else
     printInfo "Refreshing global configuration"
@@ -454,8 +470,7 @@ zz
     fi
     mv -f "${ZOPEN_JSON_CONFIG}.working" "${ZOPEN_JSON_CONFIG}"
   fi
-  jq '.' "${jsonConfigWorking}" > "${jsonConfig}"
-  echo 1 > "${rootfs}/etc/zopen/autocacheclean"
+
 }
 
 generateDefaultRepository()
@@ -500,47 +515,6 @@ EOS
   (cd "${rootfs}/etc/zopen/repos.d" && ln -s "${repoFile}" "active")
 }
 
-generateDefaultScriptlets()
-{
-  printVerbose "- Generating man-db scriptlet"
-  cat << EOF > "${rootfs}/etc/zopen/scriptlets/postTransaction/man-db"
-#!/bin/false # Expects to be sourced in zopen-* scripts, not run directly!
-# Do not modify this file; changes will be overwritten automatically!
-if ! installed=\$(zopen list --installed | grep "^man-db\$"); then
-  : # No man-db installed
-else
-  echo "- Updating man-db database..."
-  if ! mandb >/dev/null 2>&1; then
-    printWarning "man-db update completed with non-zero return code."
-    printWarning "Re-run 'mandb' manually for additional information."
-  else 
-    echo "- Update of man-db complete."
-  fi
-fi
-EOF
-  printVerbose "- Generating zopen-clean scriptlet"
-  cat << EOF > "${rootfs}/etc/zopen/scriptlets/postTransaction/zopen-clean"
-#!/bin/false # Expects to be sourced in zopen-* scripts, not run directly!
-# Do not modify this file; changes will be overwritten automatically!
-[ -e "\${ZOPEN_ROOTFS}/etc/zopen/autocacheclean" ] || exit 0
-isactive=\$(cat "\${ZOPEN_ROOTFS}/etc/zopen/autocacheclean")
-if [ "\${isactive}" -eq 1 ]; then
-  echo "- Cleaning install cache..."
-  (zopen clean --cache >/dev/null 2>&1)
-  echo "- Cache cleaned."
-fi
-EOF
-  printVerbose "- Generating caveats scriptlet"
-  cat << EOF > "${rootfs}/etc/zopen/scriptlets/postTransaction/list_caveats"
-#!/bin/false # Expects to be sourced in zopen-* scripts, not run directly!
-# Do not modify this file; changes will be overwritten automatically!
-caveats_file="\${ZOPEN_ROOTFS}/var/cache/install_caveats.tmp"
-[ -e "\${caveats_file}" ] || exit 0
-cat "\${caveats_file}"
-rm "\${caveats_file}"
-EOF
-}
-
 generateAnalyticsConfiguration()
 {
   if ! ${isCollectingStats}; then
@@ -565,7 +539,13 @@ generateAnalyticsConfiguration()
     "removes": []
   }
 zz
-  jq '.' $jsonConfigWorking > $jsonConfig
+  if jqrc=$(jq '.' $jsonConfigWorking > $jsonConfig); then
+    rm "${jsonConfigWorking}"
+  else
+    printSoftError "${jqrc}"
+    printError "Unable to update analystics configuration. See previous errors for more details."
+  fi
+  
   registerFileSystem "${UUID}" "${isHostIBM}" "${isBot}"
 
   if [ -n "$ZOPEN_ROOTFS" ] && [ -n "$ZOPEN_LOG_PATH" ] && [ -f "$ZOPEN_LOG_PATH/audit.log" ]; then
@@ -722,7 +702,6 @@ generateFileSystem
 generateJsonConfiguration
 generateDefaultRepository
 generateAnalyticsConfiguration
-generateDefaultScriptlets
 ! ${refresh} && updateBootstrappedTools
 [ -e "${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json" ] || updatePackageDB
 deinit

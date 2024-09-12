@@ -1,0 +1,7 @@
+#!/bin/sh
+pkg=$1
+[ -z "${pkg}" ] && return
+case "${pkg}" in
+  meta ) (zopen init --refresh -y) ;;
+  * ) :;; # No action
+esac

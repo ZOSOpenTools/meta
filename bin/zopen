@@ -83,9 +83,12 @@ version=false
 
 for arg in $*; do
   case "${arg}" in
-    "alt"|"build"|"clean"|"generate"|"init"|"install"|"list"|\
-    "query"|"remove"|"update-cacert"|"upgrade")
+    "alt"|"audit"|"build"|"clean"|"generate"|"init"|"install"|\
+    "list"|"query"|"remove"|"update-cacert"|"upgrade")
       subcmd="zopen-${arg}"
+      ;;
+    "config")
+      subcmd="zopen-${arg}-helper"
       ;;
     "--version")
       version=true

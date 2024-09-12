@@ -19,10 +19,15 @@ zopenInitialize()
   ZOPEN_ANALYTICS_JSON="${ZOPEN_ROOTFS}/var/lib/zopen/analytics.json"
   ZOPEN_JSON_CACHE_URL="https://raw.githubusercontent.com/zopencommunity/meta/main/docs/api/zopen_releases.json"
   ZOPEN_JSON_CONFIG="${ZOPEN_ROOTFS}/etc/zopen/config.json"
+  if [ -n "${INCDIR}" ]; then
+    ZOPEN_SCRIPTLET_DIR="${INCDIR}/scriptlets"
+  else
+    ZOPEN_SCRIPTLET_DIR="${ZOPEN_ROOTFS}/usr/local/zopen/meta/meta/include/scriptlets"
+  fi
 }
 
 addCleanupTrapCmd(){
-  newcmd=$1
+  newcmd="$1 >/dev/null 2>&1"
   # Command Trace MUST be disabled as the output from this can become
   # interleaved with output when calling zopen sub-processes.
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
@@ -31,44 +36,63 @@ addCleanupTrapCmd(){
   # didn't have a bug -trap can't be piped/redirected anywhere except
   # a file like it can in bash or non-zos sh as it seems to create
   # and run in the subshell before returning trap handler(s)!?!
-  tmpscriptfile="clean.tmp"
+  tmpscriptfile="/tmp/clean.tmp"
   trap > "${tmpscriptfile}" 2>&1 && script=$(cat "${tmpscriptfile}")
   if [ -n "${script}" ]; then
-    for trappedSignal in "EXIT" "INT" "TERM" "QUIT" "HUP"; do
-      newtrapcmd=$(
+  for trappedSignal in "EXIT" "INT" "TERM" "QUIT" "HUP"; do
+    newtrapcmd=$(
         echo "${script}" | while read trapcmd; do
-	        sigcmd=$(echo "${trapcmd}" | 
-              zossed "s/trap -- \"\(.*\)\" ${trappedSignal}.*/\1/")
-          # No match/replace in sed, then sigcmd remains unchanged
-	        [ "${sigcmd}" = "${trapcmd}" ] && continue
-          # There was a match, so sigcmd contains the string of commands
-          # to run for the trap. Need to remove the exit command (which 
-          # returns the exit code) and ensure it is last
-          # Note that eval is used to run commands with potentially
-          # embedded variables (like the return code capture/return)
-          prfx="eval exit "
-          sigcmd=$(echo "${sigcmd}" |awk -v prfx="$prfx" '
-              BEGIN{ FS=";"; OFS=";" } 
-              {
-                for (i=1; i<=NF; i++){
-                  if (substr($i, 1, length(prfx)) != prfx) {
-                    printf "%s%s", sep, $i; sep="$OFS" 
-                  }
+        sigcmd=$(echo "${trapcmd}" |
+            zossed "s/trap -- \"\(.*\)\" ${trappedSignal}.*/\1/")
+        # No match/replace in sed, then sigcmd remains unchanged
+        [ "${sigcmd}" = "${trapcmd}" ] && continue
+        # There was a match, so sigcmd contains the string of commands
+        # to run for the trap. Need to remove the exit command (which
+        # returns the exit code) and the initial set of the exit code
+        # and ensure it is last. Note that eval is used to run commands
+        # with potentially embedded variables (like the return code
+        # capture/return)
+        suffix="eval exit \$exitrc"
+        prfx="exitrc=\$?"
+        sigcmd=$(echo "${sigcmd}" |awk -v prfx="$prfx" -v suffix="$suffix" '
+            BEGIN{ FS=";"; OFS=";" sep=""}
+            {
+              for (i=1; i<=NF; i++){
+                if (substr($i, 1, length(prfx)) != prfx &&
+                    substr($i, 1, length(suffix)) != suffix) {
+                      printf "%s%s >/dev/null 2>&1", sep, $i
+                      sep = OFS
                 }
-              } 
-              END{ printf "\n" }'
-          )
-	        printf "%s;%s 2>/dev/null;eval exit \${exitrc}" "${sigcmd}" "${newcmd}" | tr -s ';'
-          break
-        done
-      )
-      if [ -n "${newtrapcmd}" ]; then
-        trap -- "${newtrapcmd}" "${trappedSignal}"
-      fi
-    done
+              }
+            } 
+            END{ printf "\n" }'
+        )
+       printf "%s;%s;%s;eval exit \${exitrc}" "${prfx}" "${newcmd}" "${sigcmd}"  | tr -s ';'
+        break
+      done
+    )
+    if [ -n "${newtrapcmd}" ]; then
+      trap -- "${newtrapcmd}" "${trappedSignal}"
+    fi
+  done
     rm "${tmpscriptfile}" 2>/dev/null
   fi
   [ -n "${xtrc}" ] && set -x
+}
+
+# showConfigParmWarning
+# writes warning messages when a bad config parameter is found
+# input: $1 - name of the paramter
+#        $2 - current value of the parameter
+#        $3 - valid value
+#        $4 - default that will be uesd
+showConfigParmWarning(){
+  printWarning "Found invalid value '$2' for $1 configuration parameter [should be $3]. Defaulting to '$4'"
+  if type zopen-config-helper >/dev/null 2>&1; then
+    printWarning "Run 'zopen config --set $1 [$3]' to update configuration if required."
+  else
+    printWarning "Update zopen configuration file with a valid value [$3] for parameter '$1' if required."
+  fi
 }
 
 # getParentProcess
@@ -131,11 +155,12 @@ diffList()
   needles="$2"
   haystackfile=$(mktempfile "haystack")
   echo "${haystack}" >"${haystackfile}"
-  [ -e "${haystackfile}" ] && addCleanupTrapCmd "rm -rf ${tempdir}"
+  [ -e "${haystackfile}" ] && addCleanupTrapCmd "rm -rf ${haystackfile}"
   needlesfile=$(mktempfile "needles")
   echo "${needles}" >"${needlesfile}"
   [ -e "${needlesfile}" ] && addCleanupTrapCmd "rm -rf ${needlesfile}"
   diffFile "${needlesfile}" "${haystackfile}"
+  rm -rf "${needlesfile}" "${haystackfile}"
 }
 
 # Generate a file name that has a high probability of being unique for
@@ -159,7 +184,6 @@ mktempfile()
     mktempfile "$1" "${suffix}" # recurse and try again
   else
     echo "${tempfile}"
-    addCleanupTrapCmd "rm -rf ${tempfile}"
   fi
 }
 
@@ -404,39 +428,49 @@ darkbackground() {
 defineANSI()
 {
   # Standard tty codes
-  ESC="\047"
+  ESC=$(printf "\047") # Start of Escape Sequence; EBCDIC=\047, ASCII=\033
+  CSI="[" # Control Sequence Introducer
+  CNL="E" # Cursor Next Line
+  CPL="F" # Cursor Previous Line
+  CHA="G" # Cursor Horizontal Absolute - column selector
+  EL="K" # Erase In Line
+  SGR="m" # Select Graphic Rendition
+
   # shellcheck disable=SC2034
-  ERASELINE="${ESC}[2K"
+  ERASELINE=$(printf "${ESC}${CSI}2${EL}")
   # shellcheck disable=SC2034
-  CRSRHIDE="${ESC}[?25l"
+  CRSRHIDE=$(printf "${ESC}${CSI}?25l")
   # shellcheck disable=SC2034
-  CRSRSHOW="${ESC}[?25h"
+  CRSRSHOW=$(printf "${ESC}${CSI}?25h")
+  CRSRSOL=$(printf "${ESC}${CSI}0${CHA}")
   # shellcheck disable=SC2034
-  CRSRPL="${ESC}[1F"   # Move to start of previous line
+  CRSRPL=$(printf "${ESC}${CSI}1${CPL}")   # Move to start of previous line
   # shellcheck disable=SC2034
-  CRSRUP="A"
+  CRSRUP="A"  # CUU
   # shellcheck disable=SC2034
-  CRSRDOWN="B"
+  CRSRDOWN="B" # CUF
   # shellcheck disable=SC2034
-  CRSRRIGHT="C"
+  CRSRRIGHT="C" # CUB
   # shellcheck disable=SC2034
-  CRSRLEFT="D"
+  CRSRLEFT="D" # CUD
+
+
 
   # Color-type codes, needs explicit terminal settings
   if [ ! "${_BPX_TERMPATH-x}" = "OMVS" ] && [ -z "${NO_COLOR}" ] && [ ! "${FORCE_COLOR-x}" = "0" ] && [ -t 1 ] && [ -t 2 ]; then
     ANSION=true
-    esc="\047"
-    BLACK="${esc}[30m"
-    RED="${esc}[31m"
-    GREEN="${esc}[32m"
-    YELLOW="${esc}[33m"
-    BLUE="${esc}[34m"
-    MAGENTA="${esc}[35m"
-    CYAN="${esc}[36m"
-    GRAY="${esc}[37m"
-    BOLD="${esc}[1m"
-    UNDERLINE="${esc}[4m"
-    NC="${esc}[0m"
+    #ESC="\047"
+    BLACK=$(printf "${ESC}${CSI}30${SGR}")
+    RED="${ESC}${CSI}31${SGR}"
+    GREEN="${ESC}${CSI}32${SGR}"
+    YELLOW="${ESC}${CSI}33${SGR}"
+    BLUE="${ESC}${CSI}34${SGR}"
+    MAGENTA="${ESC}${CSI}35${SGR}"
+    CYAN="${ESC}${CSI}36${SGR}"
+    GRAY="${ESC}${CSI}37${SGR}"
+    BOLD="${ESC}${CSI}1${SGR}"
+    UNDERLINE="${ESC}${CSI}4${SGR}"
+    NC="${ESC}${CSI}0${SGR}"
     darkbackground
     bg=$?
     if [ $bg -ne 0 ]; then
@@ -477,8 +511,8 @@ ansiline()
   deltax=$1
   deltay=$2
   echostr="$3"
-  ansimove $1 $2
-  /bin/echo "${echostr}\c"
+  ansimove "$1" "$2"
+  zosecho "${echostr}\c"
 }
 
 ansimove()
@@ -489,19 +523,19 @@ ansimove()
   movestr=""
   if [ -n "${deltax}" ]; then
     if [ "${deltax}" -gt 0 ]; then
-      movestr="${ESC}[${deltax}${CRSRRIGHT}"
+      movestr="${ESC}${CSI}${deltax}${CRSRRIGHT}"
     elif [ "${deltax}" -lt 0 ]; then
-      movestr="${ESC}[$(expr "${deltax}" \* -1)${CRSRLEFT}"
+      movestr="${ESC}${CSI}$((deltax * -1))${CRSRLEFT}"
     fi
   fi
   if [ -n "${deltay}" ]; then
     if [ "${deltay}" -gt 0 ]; then
-      movestr="${movestr}${ESC}[${deltay}${CRSRDOWN}"
+      movestr="${movestr}${ESC}${CSI}${deltay}${CRSRDOWN}"
     elif [ "${deltay}" -lt 0 ]; then
-      movestr="${movestr}${ESC}[$(expr "${deltay}" \* -1)${CRSRUP}"
+      movestr="${movestr}${ESC}${CSI}$((deltay * -1))${CRSRUP}"
     fi
   fi
-  /bin/echo "${movestr}\c"
+  zosecho "${movestr}\c"
 }
 
 getScreenCols()
@@ -509,12 +543,27 @@ getScreenCols()
   # If stdout/stderr are associated with a tty terminal
   if  [ -t 1 ] && [ -t 2 ]; then
     # Note tput does not handle ssh sessions too well...
-    stty | awk -F'[/=;]' '/columns/ { print $4}' | tr -d " "
+    lclcols=$(stty | awk -F'[/=;]' '/columns/ { print $4}' | tr -d " ")
   elif [ ! -z "${COLUMNS}" ]; then
-    echo "${COLUMNS}"
-  else
-    tput cols
+    lclcols="${COLUMNS}"
+  elif ! lclcols=$(tput cols 2>/dev/null); then
+    # tput can fail if the terminal type is unrecognised; use fallback
+    lclcols=80
   fi
+  echo "${lclcols}"
+}
+
+zostr()
+{
+  # Use the standard z/OS 'tr' command
+  /bin/tr "$@"
+}
+zosecho()
+{
+  # Use the standard z/OS echo utility; supports use of ANSI colour when
+  # required and is consistent across shells as it uses the EBCDIC ANSI
+  # control codes
+  /bin/echo "$@"
 }
 
 zossed()
@@ -598,12 +647,12 @@ defineEnvironment()
 }
 
 #
-# For now, explicitly specify /bin/echo to ensure we get the EBCDIC echo since the escape
+# For now, explicitly specify zosecho to ensure we get the EBCDIC echo since the escape
 # sequences are EBCDIC escape sequences
 #
 printColors()
 {
-  /bin/echo "$@"
+  zosecho "$@"
 }
 
 mutexReq()
@@ -785,7 +834,6 @@ unsymlinkFromSystem()
       done
       ${killph} 2>/dev/null # if the timer is not running, the kill will fail
       waitforpid ${ph}  # Make sure it's finished writing to screen
-      sleep 1 # give spinner time to exit if running
     else
       # Slower method needed to analyse each link to see if it has
       # become orphaned. Only relevent when removing a package as 
@@ -802,6 +850,7 @@ unsymlinkFromSystem()
       tempTrash=$(mktempfile "unsymlink" "trash")
       [ -e "${tempTrash}" ] && rm -f "${tempTrash}" >/dev/null 2>&1
       addCleanupTrapCmd "rm -rf ${tempDirFile}"
+      addCleanupTrapCmd "rm -rf ${tempTrash}"
       printDebug "Using temporary file ${tempDirFile}"
       printInfo "- Checking ${nfiles} potentially obsolete file links"
       progressHandler "linkcheck" "- Checked ${nfiles} potentially obsolete file links" &
@@ -840,6 +889,7 @@ EOF
         for d in $(uniq < "${tempDirFile}" | sort -r) ; do 
           [ -d "${d}" ] && rmdir "${d}" >/dev/null 2>&1
         done
+        rm "${tempDirFile}"
       fi
       if [ -e "${tempTrash}" ]; then
         printSoftError "Issues found while trying to remove the following files:"
@@ -925,7 +975,7 @@ runLogProgress()
   if [ -n "${SSH_TTY}" ]; then
     chtag -r "${SSH_TTY}"
   fi
-  ${killph} 2> /dev/null # if the timer is not running, the kill will fail
+  ${killph} 2>/dev/null # if the timer is not running, the kill will fail
   waitforpid ${ph}  # Make sure it's finished writing to screen
   return "${rc}"
 }
@@ -956,7 +1006,7 @@ progressAnimation()
     [ "${ppid}" -eq 1 ] && kill INT "${ppid}" >/dev/null 2>&1
     anim=$((anim + 1))
     [ ${anim} -gt ${animcnt} ] && anim=1
-    /bin/echo "${ESC}[1F${ESC}[0k$(getNthArrayArg "${anim}" "$@")"
+    printf "${CRSRSOL}${ERASELINE}%s" "$(getNthArrayArg "${anim}" "$@")"
   done
 }
 
@@ -968,9 +1018,11 @@ getNthArrayArg ()
 
 waitforpid()
 {
+  sleep 1
   while kill -0 "$1" >/dev/null 2>&1; do
     sleep 1
   done
+  sleep 1
 }
 
 progressHandler()
@@ -988,13 +1040,13 @@ progressHandler()
     completiontext=$2 # Custom end text (when the process is complete)
     trapcmd="exit;"
     if [ -n "${completiontext}" ]; then
-      trapcmd="/bin/echo \"${CRSRSHOW}${CRSRPL}${ERASELINE}${CRSRPL}${ERASELINE}${completiontext}\n\c\"; ${trapcmd}"
+      trapcmd="/bin/printf \"${CRSRSHOW}${ERASELINE}${CRSRPL}${ERASELINE}${completiontext}\n\"; ${trapcmd}"
     else
-      trapcmd="/bin/echo \"${CRSRSHOW}${CRSRPL}${ERASELINE}\c\"; ${trapcmd}"
+      trapcmd="/bin/printf \"${CRSRSHOW}${ERASELINE}${CRSRPL}${ERASELINE}\"; ${trapcmd}"
     fi
     # shellcheck disable=SC2064
     trap "${trapcmd}" HUP
-    /bin/echo "${CRSRHIDE}"
+    printf "${CRSRHIDE}"
     case "${type}" in
       "spinner")  progressAnimation '-' '/' '|' '\\' ;;
       "network")  progressAnimation '-----' '>----' '->---' '-->--' '--->-' '---->' '-----' '----<' '---<-' '--<--' '-<---' '<----' ;;
@@ -1042,6 +1094,17 @@ printSoftError()
   [ -n "${xtrc}" ] && set -x
 }
 
+assertFailed()
+{
+  # Used to indicate that something that should have been set in an internal
+  # call was missing/borken - a program error rather than a user error
+  [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
+  printColors "${NC}${RED}${BOLD}***INTERNAL ASSERTION ERROR: ${NC}${RED}${1}${NC}" >&2
+  [ -n "${xtrc}" ] && set -x
+  mutexFree "zopen" # prevent lock from lingering around after an error
+  exit 12
+}
+
 printError()
 {
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
@@ -1056,7 +1119,7 @@ printWarning()
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
   printColors "${NC}${WARNINGCOLOR}${BOLD}***WARNING: ${NC}${YELLOW}${1}${NC}" >&2
   [ -n "${xtrc}" ] && set -x
-  return 0;
+  return 0
 }
 
 printInfo()
@@ -1064,7 +1127,7 @@ printInfo()
   [ -z "${-%%*x*}" ] && set +x && xtrc="-x" || xtrc=""
   printColors "$1" >&2
   [ -n "${xtrc}" ] && set -x
-  return 0;
+  return 0
 }
 
 # Used to input sensitive data - turns off echo to the screen for the input
@@ -1272,9 +1335,11 @@ getJSONCacheURL(){
 downloadJSONCache()
 {
   if [ -z "${JSON_CACHE}" ]; then
-    JSON_CACHE="${ZOPEN_ROOTFS}/var/cache/zopen/zopen_releases.json"
-    JSON_TIMESTAMP="${ZOPEN_ROOTFS}/var/cache/zopen/zopen_releases.timestamp"
-    JSON_TIMESTAMP_CURRENT="${ZOPEN_ROOTFS}/var/cache/zopen/zopen_releases.timestamp.current"
+    cachedir="${ZOPEN_ROOTFS}/var/cache/zopen"
+    [ ! -e "${cachedir}" ] && mkdir -p "${cachedir}"
+    JSON_CACHE="${cachedir}/zopen_releases.json"
+    JSON_TIMESTAMP="${cachedir}/zopen_releases.timestamp"
+    JSON_TIMESTAMP_CURRENT="${cachedir}/zopen_releases.timestamp.current"
 
     # Need to check that we can read & write to the JSON timestamp cache files
     if [ -e "${JSON_TIMESTAMP_CURRENT}" ]; then
@@ -1465,7 +1530,7 @@ getSelectMetadata()
   while ! ${valid}; do
     echo "Enter version to install (0-${i}): "
     read selection < /dev/tty
-    if [ ! -z $(echo "${selection}" | sed -e 's/[0-9]*//') ]; then
+    if [ -n "$(echo "${selection}" | sed -e 's/[0-9]*//')" ]; then
       echo "Invalid input, must be a number between 0 and ${i}"
     elif [ "${selection}" -ge 0 ] && [ "${selection}" -le "${i}" ]; then
       valid=true
@@ -1499,9 +1564,9 @@ calculateReleaseLineMetadata()
     validatedReleaseLine="${installedReleaseLine}"  # Already validated when stored
   else 
     printDebug "Checking for system-configured releaseline"
-    if [ -e "${ZOPEN_ROOTFS}/etc/zopen/config.json" ]; then
-      printDebug "Using v2 configuration: '${ZOPEN_ROOTFS}/etc/zopen/config.json}'"
-      sysrelline=$(jq -re '.release_line' "${ZOPEN_ROOTFS}/etc/zopen/config.json")
+    if [ -e "${ZOPEN_JSON_CONFIG}" ]; then
+      printDebug "Using v2 configuration: '${ZOPEN_JSON_CONFIG}'"
+      sysrelline=$(jq -re '.release_line' "${ZOPEN_JSON_CONFIG}")
     elif [ -e "${ZOPEN_ROOTFS}/etc/zopen/releaseline" ] ; then
       printDebug "Using legacy file-based config"
       sysrelline=$(awk ' {print toupper($1)}') < "${ZOPEN_ROOTFS}/etc/zopen/releaseline"
@@ -1709,25 +1774,25 @@ generateInstallGraph(){
   invalidPortAssetFile=$(mktempfile "invalid" "port")
   addCleanupTrapCmd "rm -rf ${invalidPortAssetFile}"
   addToInstallGraph "install" "${invalidPortAssetFile}" "${portsToInstall}"
-  if  
-    # shellcheck disable=SC2154
-    ${doNotInstallDeps}; then
+  # shellcheck disable=SC2154
+  if  ${doNotInstallDeps}; then
       printVerbose "- Skipping dependency analysis"
   else
     # calculate dependancy graph
     createDependancyGraph "${invalidPortAssetFile}"
   fi
-  pruneGraph
+  
+  # shellcheck disable=SC2154
+  if "${reinstall}"; then 
+    printVerbose "Not pruning already installed packages as reinstalling"
+  else
+    pruneGraph
+  fi  
 }
 
 pruneGraph()
 {
   printDebug "Pruning entries in graph if already installed"
-  # shellcheck disable=SC2154
-  if "${reinstall}"; then 
-    # Reinstall packages if they are already installed - no prune needed
-    return 0
-  fi
   # shellcheck disable=SC2154
   if "${downloadOnly}"; then
     # Download the pax files, even if already installed as they are not 
@@ -1786,7 +1851,7 @@ processRepoInstallFile(){
   printVerbose "Beginning port installation"
   mutexReq "zopen"
   
-  processActionScripts "txn-pre"
+  processActionScripts "transactionpre"
   if [ 0 -eq "$(echo "${installList}" | jq --raw-output '.installqueue| length')" ]; then
     printInfo "- No packages to install"
     return 0
@@ -1826,7 +1891,7 @@ processRepoInstallFile(){
     spaceValidate "${spaceRequiredBytes}"
   fi
 
-  processActionScripts "txn-pre"
+  processActionScripts "transactionpre"
   for installurl in $(echo "${installList}" | jq --raw-output '.installqueue |map( (.asset.url| sub(" ";"") ))| @sh'); do
     printVerbose "Analysing :'${installurl}'"
     installurl=$(echo "${installurl}" | tr -d "' ")
@@ -1842,7 +1907,7 @@ processRepoInstallFile(){
       printError "Unrecognised install file format"
     fi
   done
-  processActionScripts "txn-post"
+  processActionScripts "transactionpost"
   mutexFree "zopen"
   printVerbose "Port installation complete"
 }
@@ -1886,7 +1951,6 @@ installFromPax()
 {
   pax="${downloadToDir}/$1"
   printDebug "Installing from '${pax}'"
-  processActionScripts "install-pre"
 
   metadatafile=$(extractMetadataFromPax "${pax}")
   # Ideally we would use the following, but name does not always map
@@ -1894,6 +1958,9 @@ installFromPax()
   # repo field so can extract from there instead
   #name=$(jq --raw-output '.product.name' "${metadatafile}")
   name=$(jq --raw-output '.product.repo | match(".*/ZOSOpenTools/(.*)port").captures[0].string' "${metadatafile}")
+  if ! processActionScripts "installpre" "${name}" "${metadatafile}"; then
+    printError "Failed installation pre-requisite check(s) for '${name}'. Correct previous errors and retry command"
+  fi
 
   # Store current installation directory (if exists)
   currentderef=$(cd "${ZOPEN_PKGINSTALL}/${name}/${name}" > /dev/null 2>&1 && pwd -P)
@@ -1911,7 +1978,7 @@ installFromPax()
   fi
 
   # shellcheck disable=SC2154
-  if ! runLogProgress "pax -rf ${pax} -p p ${paxredirect} ${redirectToDevNull}" "Expanding ${pax}" "Expanded ${pax}"; then
+  if ! runLogProgress "pax -rf ${pax} -p p ${paxredirect} ${redirectToDevNull}" "Expanding: ${pax}" "Expanded:  ${pax}"; then
     printSoftError "Unexpected errors during unpaxing, package directory state unknown"
     printError "Use zopen alt to select previous version to ensure known state"
   fi
@@ -1974,7 +2041,7 @@ EOF
       printf "${name}:\n%s\n" "${installCaveat}">> "${ZOPEN_ROOTFS}/var/cache/install_caveats.tmp"
     fi
 
-    processActionScripts "install-post"
+    processActionScripts "installpost" "${name}"
   fi
   printInfo "${NC}${GREEN}Successfully installed ${name}${NC}"
 }
@@ -1985,70 +2052,146 @@ getActivePackageDirs()
   (unset CD_PATH; cd "${ZOPEN_PKGINSTALL}" && zosfind  ./*/. ! -name . -prune -type l)
 }
 
+
+# processActionScripts
+# runs any scriptlets that are applicable to the current phase of an administration
+# command (install/update/remove/alternative)
+# inputs: $1 the phase of the transaction that is currently executing
+#         $2 the name of the package being administered
+# return: 0  for success (nb. Warnings may haeve been printed to screen)
+#         8  on error
 processActionScripts()
 {
+  set -x
+  printVerbose "Processing phase '${1}' scriptlets"
+  [ $# -lt 1 ] && printError "Internal error; missing action phase"
   phase=$1
-  case $phase in
-    "install-post") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/postInstall";;
-    "remove-post") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/postRemove";;
-    "txn-post") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/postTransaction";;
-    "install-pre") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/preInstall";;
-    "remove-pre") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/preRemove";;
-    "txn-pre") scriptDir="${ZOPEN_ROOTFS}/etc/zopen/scriptlets/preTransaction";;
-    *) printError "Internal error; invalid post action phase '${phase}'"
+  shift # Drop the initial parameter
+
+  case "${phase}" in
+    "installpost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/installpost";;
+    "removepost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/removepost";;
+    "transactionpost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/transactionpost";;
+    "installpre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/installpre";;
+    "removepre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/removepre";;
+    "transactionpre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/transactionpre";;
+    *) assertFailed "Invalid process action phase '${phase}'"
   esac
-  (
+  printVerbose "Running script[s] from '${scriptDir}'"
+  scriptRc=$(
+    # Running in a sub-shell so the scripts do not directly affect the current
+    # environment - status is returned to scriptRc
     [ -d "${scriptDir}" ] || return 0 # No script directory
     unset CDPATH;
     cd "${scriptDir}" || exit # the subshell
-    find . | while read scriptFile;
-    do
-      if [ ! -e "${scriptFile}" ]; then
+    find . -type f | while read scriptFile; do
+      if [ ! -x "${scriptFile}" ]; then
         printWarning "Script '${scriptDir}/${scriptFile}' is not executable. Check permissions"
         continue
       fi
-      # shellcheck disable=SC1090
-      . "${scriptFile}"
+      printVerbose "Running script '${scriptFile}'"
+      # Call each scriptlet with the remaining parameters passed to this function
+      if ! src=$("${scriptFile}" "$@"); then
+        exit "${src:=-1}"
+      fi
     done
   )
+  set +x
+  return "${scriptRc:-0}"
 }
 
+# updatePackageDB
+# Updates/generates the installed package database
+# return: 0 for success
+#         8 in error
 updatePackageDB()
 {
   printVerbose "Updating the installed package tracker db"
-  if ! pkgdirs=$(getActivePackageDirs); then
-    printError "Unable to update the package db"
-  fi
 
   pdb="${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json"
   if [ -e "${pdb}" ]; then
     backup=$(mktempfile "updatepdb" "bkk")
+    addCleanupTrapCmd "rm -rf ${backup}"
     cp "${pdb}" "${backup}"
     rm "${pdb}"
   fi
-  pkgdirs=$(getActivePackageDirs)
+  if ! pkgdirs=$(getActivePackageDirs); then
+    printError "Unable to update the package db"
+  fi
   for pkgdir in ${pkgdirs}; do
     metadataFile="${ZOPEN_PKGINSTALL}/${pkgdir}/metadata.json"
     if [ ! -e "${metadataFile}" ]; then
-      printVerbose "Falling back to filesystem analysis"
+      # TODO: Fallback to filesystem analysis [depending on backward compatability]
       printWarning "No metadata.json found in '${ZOPEN_PKGINSTALL}/${pkgdir}'. Old package install?"
       continue
     fi
-    metadata=$(cat "${metadataFile}")
+    escapedJSONFile=$(mktempfile "escaped" "json")
+    addCleanupTrapCmd "rm -rf ${escapedJSONFile}"
+    stripControlCharacters "${metadataFile}" "${escapedJSONFile}"
     if [ ! -e "${pdb}" ]; then
       echo "[]" > "${pdb}"
     fi
-
-    mdj=$(echo "${metadata}" | jq '. as $metadata | .product.repo | match(".*/ZOSOpenTools/(.*)port").captures[0].string | [{(.):$metadata}]')
+    mdj=$(jq '. as $metadata | .product.repo | match(".*/ZOSOpenTools/(.*)port").captures[0].string | [{(.):$metadata}]' \
+        "${escapedJSONFile}")
     if ! jq --argjson mdj "${mdj}" '. += $mdj' \
             "${pdb}" > \
             "${pdb}.working"; then
-      printError "Could not add metadata for '${pkg}' to install tracker. Run zopen --re-init to attempt regeneration."
+      printSoftError "Could not add metadata for '$(basename "${pkgdir}")' to install tracker."
+      printError "Run zopen --re-init to attempt database regeneration and zopen install --reinstall $(basename "${pkgdir}")"
     fi
     mv "${pdb}.working" "${pdb}"
   done
 }
 
+stripControlCharacters(){
+  [ ! -f "$1" ] && assertFailed "No input file specified for parsing!"
+  [ -e "$2" ] && assertFailed "Output file exists so cannot be used for output!"
+  tr -d '[:cntrl:]' > "$2" < "$1"
+
+}
+# JSONcontrolChar2Unicode
+# ensures escaping of characters in JSON. For example, if a caveat has an
+# unescaped '\n'/0x0A jq will fail to process it. Escape control characters
+# 0x00->0x1F and reverse solidus. Note this should also only process unescaped 
+# sequences by checking whether the character prior to the sequence is not a 
+# reverse-solidus (so start-of-line [^] or any character [^\] ). If there was
+# a preceding character, then capture/use that in the regex (\1) so it does not
+# get discarded
+# 
+# inputs: $1 the input JSON file
+#         $2 the output file, with sanitised JSON
+# return: 0  for success (nb. Warnings may haeve been printed to screen)
+#         8  on error
+JSONcontrolChar2Unicode() {
+  [ ! -f "$1" ] && assertFailed "No input file specified for parsing!"
+  [ -e "$2" ] && assertFailed "Output file exists so cannot be used for output!"
+  zossed -E ' # Note this is a long string!
+      s/\\/\\\\/g; # Escape reverse-solidus; the following are the control chars 
+      s/(^|[^\\])\x00/\1\\u0000/g; s/(^|[^\\])\x01/\1\\u0001/g;
+      s/(^|[^\\])\x02/\1\\u0002/g; s/(^|[^\\])\x03/\1\\u0003/g;
+      s/(^|[^\\])\x04/\1\\u0004/g; s/(^|[^\\])\x05/\1\\u0005/g;  
+      s/(^|[^\\])\x06/\1\\u0006/g; s/(^|[^\\])\x07/\1\\u0007/g;
+      s/(^|[^\\])\x08/\1\\u0008/g; s/(^|[^\\])\x09/\1\\u0009/g;
+      s/(^|[^\\])\x0A/\1\\u000A/g; s/(^|[^\\])\x0B/\1\\u000B/g;  
+      s/(^|[^\\])\x0C/\1\\u000C/g; s/(^|[^\\])\x0D/\1\\u000D/g;
+      s/(^|[^\\])\x0E/\1\\u000E/g; s/(^|[^\\])\x0F/\1\\u000F/g;
+      s/(^|[^\\])\x10/\1\\u0010/g; s/(^|[^\\])\x11/\1\\u0011/g;  
+      s/(^|[^\\])\x12/\1\\u0012/g; s/(^|[^\\])\x13/\1\\u0013/g;
+      s/(^|[^\\])\x14/\1\\u0014/g; s/(^|[^\\])\x15/\1\\u0015/g;
+      s/(^|[^\\])\x16/\1\\u0016/g; s/(^|[^\\])\x17/\1\\u0017/g;  
+      s/(^|[^\\])\x18/\1\\u0018/g; s/(^|[^\\])\x19/\1\\u0019/g;
+      s/(^|[^\\])\x1A/\1\\u001A/g; s/(^|[^\\])\x1B/\1\\u001B/g;
+      s/(^|[^\\])\x1C/\1\\u001C/g; s/(^|[^\\])\x1D/\1\\u001D/g;  
+      s/(^|[^\\])\x1E/\1\\u001E/g; s/(^|[^\\])\x1F/\1\\u001F/g;
+    '  "$1" > "$2"
+}
+
+# addToInstallTracker
+# Records the installation into the database that tracks which packages have
+# been installed
+# inputs: $1 the name of the package
+# return: 0  for success (nb. Warnings may haeve been printed to screen)
+#         8  on error
 addToInstallTracker()
 {
   pkg=$1
@@ -2068,6 +2211,12 @@ addToInstallTracker()
   mv "${pdb}.working" "${pdb}"
 }
 
+# removeFromInstallTracker
+# Removes the installation of the package from the database, making it
+# uninstalled
+# inputs: $1 the name of the package
+# return: 0  for success (nb. Warnings may haeve been printed to screen)
+#         8  on error
 removeFromInstallTracker()
 {
   pkg=$1

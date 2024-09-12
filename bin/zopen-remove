@@ -52,14 +52,15 @@ HELPDOC
 removePackages()
 {
   pkglist=$*
-  processActionScripts "txn-pre"
+  processActionScripts "transactionpre"
   # Create a temp file name to trigger the post-transaction action script
   # triggering - run only if an action was taken (which creates the file)
   runpostTxnActionScripts=$(mktempfile "txnpost" "run")
+  addCleanupTrapCmd "rm -rf ${runpostTxnActionScripts}"
   echo "${pkglist}" | xargs | tr ' ' '\n' | sort | while read pkg; do
     printHeader "Removing package: ${pkg}"
-    processActionScripts "remove-pre"
-    printInfo "- Checking status of package '${pkg}'"
+    processActionScripts "removepre"
+    printInfo "- Querying install status of package '${pkg}'"
     if [ ! -f "${ZOPEN_PKGINSTALL}/${pkg}/${pkg}/.active" ]; then
       printInfo "${NC}${YELLOW}Package '${pkg}' is not installed${NC}"
     else
@@ -106,14 +107,14 @@ removePackages()
       [ -d "${ZOPEN_ROOTFS}/etc/profiled/${pkg}" ] && rm -rf "${ZOPEN_ROOTFS}/etc/profiled/${pkg}"
 
       removeFromInstallTracker "${pkg}"
-      processActionScripts "remove-post"
+      processActionScripts "removepost"
       syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_PACKAGE},${CAT_REMOVE}" "REMOVE" "removePackage" "Removed package:'${needle};version:${version};"
       touch "${runpostTxnActionScripts}"
       printInfo "${NC}${GREEN}Successfully removed: ${pkg}${NC}"
     fi
   done
   if [ -e "${runpostTxnActionScripts}" ]; then 
-    processActionScripts "txn-post"; 
+    processActionScripts "transactionpost"; 
     rm "${runpostTxnActionScripts}"  
   fi
 }

@@ -1,0 +1,5 @@
+#!/bin/sh
+caveats_file="${ZOPEN_ROOTFS}/var/cache/install_caveats.tmp"
+[ -e "${caveats_file}" ] || exit 0
+cat "${caveats_file}"
+rm "${caveats_file}"

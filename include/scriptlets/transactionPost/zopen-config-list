@@ -1,0 +1,16 @@
+#!/bin/sh
+envFile="${ZOPEN_ROOTFS}/etc/zopen/zopen.env"
+envFileWorking="${envFile}.working"
+# Running in a "clean" environment
+if ! (env -i . "${ZOPEN_ROOTFS}"/etc/zopen-config --knv | sort > "${envFileWorking}" ); then
+  printError "Unable to generate zopen environment key/value pair"
+fi
+[ -e "${envFileWorking}" ] || printError "Could not locate working file"
+if ! [ -e "${envFile}" ]; then
+  mv "${envFileWorking}" "${envFile}"
+  exit 0
+fi
+if ! diff=$(diff "${envFileWorking}" "${envFile}"); then
+  printSoftError "${diff}"
+  printError "Could not compute difference in new key-value pairs. Correct errors and run and redirect '${ZOPEN_ROOTFS}/etc/zopen-config knv | sort' manually."
+fi

@@ -29,23 +29,23 @@ ${ME} is a utility to download/install a zopen community package.
 Usage: zopen install [OPTION] [PARAMETERS] [PACKAGES]
 
 Options:
-  -u, --upgrade     check for package updates and apply
-      --reinstall   reinstall currently installed package(s)
   -y, --yes         automatically answer yes to prompts
-      --select      select a version to install from available versions
-      --release-line [stable|dev]
-                    the release line to install from
-      --no-deps     do not install dependencies
+      --all         download all available packages and install
+      --bypass-prereq-checks 
+                    ignores pre-req checks
+      --download-only
+                    download installable package with no install
       --install-or-upgrade
                     installs the package if not installed, or upgrades
                     the package if installed (deprecated as default behaviour)
-      --nosymlink   do not integrate into filesystem through symlink 
-                    redirection
-      --no-set-active
-                    do not change the currently active version
-      --download-only
-                    download installable package with no install
-      --all         download all available packages and install
+      --nodeps      do not install dependencies
+      --noset-active 
+                    unpackage onto the system but do not change the currently
+                    active version
+      --reinstall   reinstall currently installed package(s)
+      --release-line [stable|dev]
+                    the release line to install from
+      --select      select a version to install from available versions
   -v, --verbose     run in verbose mode
   -h,-?, --help     display this help and exit
 
@@ -56,9 +56,7 @@ Examples:
   zopen install --release-line DEV foo
                     install package foo from the DEV releaseline if
                     available
-  zopen upgrade     upgrade all packages to latest version on their
-                    releaseline
-  zopen install -y foo bar --no-deps
+  zopen install -y foo bar --nodeps
                     install packages foo and bar without asking for
                     user confirmation and without installing any
                     dependencies
@@ -104,11 +102,11 @@ while [ $# -gt 0 ]; do
       # shellcheck disable=SC2034
       installOrUpgrade=true  # Upgrade package or install if not present
       ;;
-    "--no-symlink")
+    "--nosymlink" | "--no-symlink") # Deprecate; use --nosetactive
       # shellcheck disable=SC2034
-      nosymlink=true  # Do not mesh the package into the file system; leave as stand-alone
+      setactive=true  # Do not mesh the package into the file system; leave as stand-alone
       ;;
-    "--no-deps")
+    "--nodeps" | "--no-deps") # Deprecate --no-deps for consistency
       doNotInstallDeps=true
       ;;
     "--release-line")
@@ -123,7 +121,7 @@ while [ $# -gt 0 ]; do
     "--download-only")
       downloadOnly=true  # Download remote package files to current directory only
       ;;
-    "--no-set-active")
+    "--noset-active" | "--no-set-active") # Deprecate --no-set-active for consistency
       # shellcheck disable=SC2034
       setactive=false  # Install package as normal but keep existing installation as active
       ;;
@@ -185,7 +183,7 @@ for installRepo in ${potentials}; do
 done
 
 if [ ! ${fileinstall} ]; then 
-  printVerbose "Using potentially remote files; ensuring configured for remte access"
+  printVerbose "Using potentially remote files; ensuring configured for remote access"
   checkIfConfigLoaded
 fi
 
