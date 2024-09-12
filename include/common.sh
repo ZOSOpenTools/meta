@@ -1851,7 +1851,7 @@ processRepoInstallFile(){
   printVerbose "Beginning port installation"
   mutexReq "zopen"
   
-  processActionScripts "transactionpre"
+  processActionScripts "transactionPre"
   if [ 0 -eq "$(echo "${installList}" | jq --raw-output '.installqueue| length')" ]; then
     printInfo "- No packages to install"
     return 0
@@ -1891,7 +1891,7 @@ processRepoInstallFile(){
     spaceValidate "${spaceRequiredBytes}"
   fi
 
-  processActionScripts "transactionpre"
+  processActionScripts "transactionPre"
   for installurl in $(echo "${installList}" | jq --raw-output '.installqueue |map( (.asset.url| sub(" ";"") ))| @sh'); do
     printVerbose "Analysing :'${installurl}'"
     installurl=$(echo "${installurl}" | tr -d "' ")
@@ -1907,7 +1907,7 @@ processRepoInstallFile(){
       printError "Unrecognised install file format"
     fi
   done
-  processActionScripts "transactionpost"
+  processActionScripts "transactionPost"
   mutexFree "zopen"
   printVerbose "Port installation complete"
 }
@@ -1958,7 +1958,7 @@ installFromPax()
   # repo field so can extract from there instead
   #name=$(jq --raw-output '.product.name' "${metadatafile}")
   name=$(jq --raw-output '.product.repo | match(".*/ZOSOpenTools/(.*)port").captures[0].string' "${metadatafile}")
-  if ! processActionScripts "installpre" "${name}" "${metadatafile}"; then
+  if ! processActionScripts "installPre" "${name}" "${metadatafile}"; then
     printError "Failed installation pre-requisite check(s) for '${name}'. Correct previous errors and retry command"
   fi
 
@@ -2041,7 +2041,7 @@ EOF
       printf "${name}:\n%s\n" "${installCaveat}">> "${ZOPEN_ROOTFS}/var/cache/install_caveats.tmp"
     fi
 
-    processActionScripts "installpost" "${name}"
+    processActionScripts "installPost" "${name}"
   fi
   printInfo "${NC}${GREEN}Successfully installed ${name}${NC}"
 }
@@ -2062,19 +2062,18 @@ getActivePackageDirs()
 #         8  on error
 processActionScripts()
 {
-  set -x
   printVerbose "Processing phase '${1}' scriptlets"
   [ $# -lt 1 ] && printError "Internal error; missing action phase"
   phase=$1
   shift # Drop the initial parameter
 
   case "${phase}" in
-    "installpost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/installpost";;
-    "removepost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/removepost";;
-    "transactionpost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/transactionpost";;
-    "installpre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/installpre";;
-    "removepre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/removepre";;
-    "transactionpre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/transactionpre";;
+    "installPost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/installPost";;
+    "removePost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/removePost";;
+    "transactionPost") scriptDir="${ZOPEN_SCRIPTLET_DIR}/transactionPost";;
+    "installPre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/installPre";;
+    "removePre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/removePre";;
+    "transactionPre") scriptDir="${ZOPEN_SCRIPTLET_DIR}/transactionPre";;
     *) assertFailed "Invalid process action phase '${phase}'"
   esac
   printVerbose "Running script[s] from '${scriptDir}'"
@@ -2096,7 +2095,6 @@ processActionScripts()
       fi
     done
   )
-  set +x
   return "${scriptRc:-0}"
 }
 
