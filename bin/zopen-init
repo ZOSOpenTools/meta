@@ -173,6 +173,16 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# Wrapper around jq to provide extra help for certain scenarios
+jqw()
+{
+  if ! type jq >/dev/null 2>&1; then
+    printSoftError "Cannot locate 'jq'."
+    printSoftError "If recovering a system, run . ./.env from the following location:"
+    printError "  <zopenroot>/usr/local/zopen/jq/<jq-version>  and retry command"
+  fi
+  jq "$@"
+}
 
 determineRootFileSystem()
 {
@@ -227,7 +237,9 @@ determineStatsCollection()
   elif [ -n "$enableStats" ] && ! $enableStats; then
     isCollectingStats=false
   elif [ $analyticsRC -lt 2 ]; then
-    isCollectingStats=$(jq -re '.is_collecting_stats' "${jsonConfig}")
+    if ! isCollectingStats=$(jqw -re '.is_collecting_stats' "${jsonConfig}"); then
+      return 4
+    fi
     return
   elif $isHostIBM; then
     printAttention "Attention: Turning on usage statistics as your host is an IBM host. If this is incorrect, rerun with --noenable-stats"
@@ -399,13 +411,15 @@ generateJsonConfiguration()
 
   if [ -e "${jsonConfig}" ]; then
     # isCollectingStats is set elsewhere
-    releaseLine=$(jq -r '.release_line' "${jsonConfig}")
-    rm_fileprocs=$(jq -r '.num_rm_procs' "${jsonConfig}")
-    if [ -z "${OVERRIDE_ZOS_TOOLS}" ] && jq -er ".override_zos_tools" $jsonConfig >/dev/null; then
-      OVERRIDE_ZOS_TOOLS=$(jq -r '.override_zos_tools' $jsonConfig)
+    if ! releaseLine=$(jqw -r '.release_line' "${jsonConfig}"); then
+      return 4
     fi
-    autocacheclean=$(jq -r '.autocacheclean' "${jsonConfig}")
-    autopkgpurge=$(jq -r '.autopkgpurge' "${jsonConfig}")    
+    rm_fileprocs=$(jqw -r '.num_rm_procs' "${jsonConfig}")
+    if [ -z "${OVERRIDE_ZOS_TOOLS}" ] && jqw -er ".override_zos_tools" $jsonConfig >/dev/null; then
+      OVERRIDE_ZOS_TOOLS=$(jqw -r '.override_zos_tools' $jsonConfig)
+    fi
+    autocacheclean=$(jqw -r '.autocacheclean' "${jsonConfig}")
+    autopkgpurge=$(jqw -r '.autopkgpurge' "${jsonConfig}")    
   fi
 
   if ${releaselineDev}; then
@@ -461,14 +475,14 @@ zz
     printInfo "Refreshing global configuration"
     # In case 3rd-party edits have been made (adding custom keys for
     # example), just update the values that zopen itself knows about inline
-    if ! jq --arg releaseLine "${releaseLine}" \
+    if ! jqw --arg releaseLine "${releaseLine}" \
         --arg isoverrideZOSTools ${OVERRIDE_ZOS_TOOLS} \
         --arg isCollectingStats ${isCollectingStats} \
                 ".release_line = \$releaseLine | .override_zos_tools = \$isoverrideZOSTools | .is_collecting_stats = \$isCollectingStats" \
-                "${ZOPEN_JSON_CONFIG}" > "${ZOPEN_JSON_CONFIG}.working"; then
+                "${jsonConfig}" > "${jsonConfigWorking}"; then
       printError "Errors updating existing configuration file. See previous errors for more information and retry command."
     fi
-    mv -f "${ZOPEN_JSON_CONFIG}.working" "${ZOPEN_JSON_CONFIG}"
+    mv -f "${jsonConfigWorking}" "${jsonConfig}"
   fi
 
 }
@@ -524,7 +538,7 @@ generateAnalyticsConfiguration()
   jsonConfig="${rootfs}/var/lib/zopen/analytics.json"
 
   # if it's an existing valid json, skip
-  if [ -s "${jsonConfig}" ] && jq "." -e "${jsonConfig}" 2>/dev/null >/dev/null; then
+  if [ -s "${jsonConfig}" ] && jqw "." -e "${jsonConfig}" 2>/dev/null >/dev/null; then
     return;
   fi
   jsonConfigWorking="${jsonConfig}.working"
@@ -539,7 +553,7 @@ generateAnalyticsConfiguration()
     "removes": []
   }
 zz
-  if jqrc=$(jq '.' $jsonConfigWorking > $jsonConfig); then
+  if jqrc=$(jqw '.' $jsonConfigWorking > $jsonConfig); then
     rm "${jsonConfigWorking}"
   else
     printSoftError "${jqrc}"
@@ -696,12 +710,21 @@ deinit()
   fi
 }
 
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 init
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 generateFileSystem
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 ! ${refresh} && installPrereqs
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 generateJsonConfiguration
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 generateDefaultRepository
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 generateAnalyticsConfiguration
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 ! ${refresh} && updateBootstrappedTools
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 [ -e "${ZOPEN_ROOTFS}/var/lib/zopen/packageDB.json" ] || updatePackageDB
+echo "DBG!! ZOPEN_ROOTFS=${ZOPEN_ROOTFS}"
 deinit

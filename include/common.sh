@@ -1706,6 +1706,32 @@ createDependancyGraph(){
   createDependancyGraph "${invalidPortAssetFile}"
 }
 
+checkPreReqs(){
+  pkg=$1
+  metadata=$2
+[ -z "${pkg}" ] && return 12
+# shellcheck disable=SC2154
+if ! "${bypassPrereqs:-false}"; then
+  systemPrereqs=$(echo "${metadata}" | jq -r '.product.system_prereqs // empty'  2>/dev/null)
+  systemPrereqs="${systemPrereqs} zos24" # zos24 should be min requirement - always add it
+  if [ -n "${systemPrereqs}" ]; then
+    if [ ! -d "${ZOPEN_SYSTEM_PREREQS_DIR}" ]; then
+      printWarning "${ZOPEN_SYSTEM_PREREQS_DIR} does not exist. You should upgrade meta. Bypassing prereq check."
+    fi
+    for prereq in $(echo "${systemPrereqs}" | xargs | tr ' ' '\n' | sort -u); do
+      printHeader "Checking system pre-req requirement '${prereq}'"
+      if [ -e "${ZOPEN_SYSTEM_PREREQS_DIR}/${prereq}" ]; then
+        if ! /bin/sh -c "${ZOPEN_SYSTEM_PREREQS_DIR}/${prereq}"; then
+          printError "Failed system pre-req check '${prereq}'. If you wish to bypass this, install with --bypass-prereq-checks"
+        fi
+      else
+        printWarning "${ZOPEN_SYSTEM_PREREQS_DIR}/${prereq} does not exist. You should upgrade meta. Bypassing prereq check."
+      fi
+    done
+  fi
+fi
+
+}
 # addToInstallGraph
 # Finds appropriate metadata for the specified port(s) and
 # includes that in the installation file
@@ -1722,6 +1748,9 @@ addToInstallGraph(){
   for portRequested in ${pkgList}; do
     if ! getPortMetaData "${portRequested}" "${invalidPortAssetFile}"; then
       continue
+    fi
+    if ! preReqFailed=$(checkPreReqs "${asset}"); then
+      echo "${preReqFailed}" >> "${invalidPortAssetFile}"
     fi
     ## Merge asset into output file - note the lack of inline file edit hence the mv
     installList=$(echo "${installList}" | jq ".installqueue += [{\"portname\":\"${validatedPort}\", \"asset\":${asset}, \"installtype\":\"${installtype}\"}]")

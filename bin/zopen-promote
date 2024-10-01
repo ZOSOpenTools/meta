@@ -244,9 +244,6 @@ fi
 
 printInfo "- Promoting from '${rootfs}' to '${promotefs}'..."
 
-printDebug "Generating temporary pipe"
-FIFO_PIPE_STDOUT=$(mktempfile "" ".pipe")
-
 progressHandler "spinner" "- Promoted from '${rootfs}' to '${promotefs}'." &
 ph=$!
 killph="kill -HUP ${ph}"
@@ -262,7 +259,8 @@ printDebug "Need to pax old dir and unpax to new dest to keep symlink structure"
 printDebug "Generating temporary pipe"
 FIFO_PIPE_STDOUT=$(mktempfile "promotestdout" ".pipe")
 [ ! -p "${FIFO_PIPE_STDOUT}" ] || rm -f "${FIFO_PIPE_STDOUT}"
-mkfifo "${FIFO_PIPE_STDOUT}" && chtag -tc 819 "${FIFO_PIPE_STDOUT}" && addCleanupTrapCmd "rm -rf ${FIFO_PIPE_STDOUT}"
+mkfifo "${FIFO_PIPE_STDOUT}" && chtag -tc 819 "${FIFO_PIPE_STDOUT}"
+addCleanupTrapCmd "rm -rf ${FIFO_PIPE_STDOUT}"
 cd "${rootfs}" && pax -rw -p p "." "${promotefs}"  2>>"${FIFO_PIPE_STDOUT}" &
 while read OUTMSG; do
   printDebug "Parsing output: '${OUTMSG}'"

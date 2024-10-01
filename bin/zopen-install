@@ -81,6 +81,7 @@ xdebug=false
 quiet=false
 selectVersion=false
 # shellcheck disable=SC2034
+bypassPrereqs=false
 setActive=true
 downloadOnly=false
 reinstall=false
