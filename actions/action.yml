@@ -35,7 +35,7 @@ inputs:
   user_name:
     description: 'Commit user name'
     required: false
-    default: 'zosopentoolsmain'
+    default: 'zopencommunity'
   user_email:
     description: 'Commit user email'
     required: false
