@@ -19,7 +19,9 @@ setupMyself()
   MYDIR="$(cd "$(dirname "$0")" > /dev/null 2>&1 && pwd -P)"
   INCDIR="${MYDIR}/../include"
   if ! [ -d "${INCDIR}" ] && ! [ -f "${INCDIR}/common.sh" ]; then
-    echo "Internal Error. Unable to find common.sh file to source." >&2
+    Error_Message="Internal Error. Unable to find common.sh file to source." >&2
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printSoftError" "${Error_Message}" "${Error_Message}"
     exit 8
   fi
   . "${INCDIR}/common.sh"
@@ -43,12 +45,16 @@ asciiecho()
   file="$2"
 
   if ! echo "${text}" > "${file}"; then
-    echo "Unable to echo text to ${file}" >&2
+    Error_Message="Unable to echo text to ${file}" >&2
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printSoftError" "${Error_Message}" "${Error_Message}"
     return 2
   fi
   if [ "$(chtag -p "${file}" | cut -f2 -d' ')" = "IBM-1047" ]; then
     if ! /bin/iconv -f IBM-1047 -t ISO8859-1 < "${file}" > "${file}_ascii" || ! chtag -tc ISO8859-1 "${file}_ascii" || ! mv "${file}_ascii" "${file}"; then
-      printError "Unable to convert EBCDIC text to ASCII for ${file}" >&2
+      Error_Message="Unable to convert EBCDIC text to ASCII for ${file}" >&2
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   fi
   return 0
@@ -271,7 +277,9 @@ for tmp in "${TMPDIR}" "${TMP}" /tmp; do
 done
 
 if [ ! -d "${tmp}" ]; then
-  printError "Temporary directory not found. Please specify \$TMPDIR, \$TMP or have a valid /tmp directory."
+  Error_Message="Temporary directory not found. Please specify \$TMPDIR, \$TMP or have a valid /tmp directory."
+  content="${Error_Message}.How to fix error?"
+  AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
 fi
 
 TMP_FIFO_PIPE="${tmp}/${LOGNAME}.pipe"
@@ -388,6 +396,8 @@ Option:
   -vv                   run in very verbose mode (sets environment variables
                         V=1 and VERBOSE=1).
   -u, --upgradedeps     upgrade all dependencies by running zopen install.
+  --ai                  run with tinyllama model via LocalAI, zopen build will send error to
+                        the model and the model will provide what patch we need to do.
 
 The specifics of how the tool works can be controlled through environment
 variables. The only environment variables you _must_ specify are to tell
@@ -426,6 +436,7 @@ processOptions()
   noInstallRuntimeDeps=false
   instrument=false
   depsDepth=2
+  ai=false
   while [ $# -gt 0 ]; do
     case $1 in
     "-h" | "--help" | "-?")
@@ -464,6 +475,9 @@ processOptions()
       if [ "${btype}" = "DEBUG" ]; then
         buildInReleaseMode=false
       fi
+      ;;
+    "--ai")
+      ai=true
       ;;
     "--deps-depth")
       shift
@@ -510,7 +524,9 @@ processOptions()
       startShell=true
       ;;
     *)
-      printError "Unknown option ${1} specified"
+      Error_Message="Unknown option ${1} specified"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       ;;
     esac
     shift
@@ -520,7 +536,9 @@ processOptions()
 loadBuildEnv()
 {
   if [ ! -r ${buildEnvFile} ]; then
-    printError "Build environment file '${buildEnvFile}' does not exist or is not readable"
+    Error_Message="Build environment file '${buildEnvFile}' does not exist or is not readable"
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
   fi
 
   # Indicates to .env script that we're in zopen build
@@ -544,11 +562,15 @@ checkEnv()
   if [ ! -z "${ZOPEN_BUILD_LINE}" ]; then
     if [ "${ZOPEN_BUILD_LINE}x" = "DEVx" ]; then
       if [ -z "${ZOPEN_DEV_DEPS}" ]; then
-        printError "Building from dev, but ZOPEN_DEV_DEPS not specified"
+        Error_Message="Building from dev, but ZOPEN_DEV_DEPS not specified"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
       ZOPEN_DEPS="${ZOPEN_DEV_DEPS}"
       if [ -z "${ZOPEN_DEV_URL}" ]; then
-        printError "Building from dev, but ZOPEN_DEV_URL not specified"
+        Error_Message="Building from dev, but ZOPEN_DEV_URL not specified"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
       ZOPEN_URL="${ZOPEN_DEV_URL}"
       if [ ! -z "${ZOPEN_DEV_BRANCH}" ]; then
@@ -569,11 +591,15 @@ checkEnv()
       fi
     elif [ "${ZOPEN_BUILD_LINE}x" = "STABLEx" ]; then
       if [ -z "${ZOPEN_STABLE_DEPS}" ]; then
-        printError "Building from stable, but ZOPEN_STABLE_DEPS not specified"
+        Error_Message="Building from stable, but ZOPEN_STABLE_DEPS not specified"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
       ZOPEN_DEPS="${ZOPEN_STABLE_DEPS}"
       if [ -z "${ZOPEN_STABLE_URL}" ]; then
-        printError "Building from stable, but ZOPEN_STABLE_URL not specified"
+        Error_Message="Building from stable, but ZOPEN_STABLE_URL not specified"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
       ZOPEN_URL="${ZOPEN_STABLE_URL}"
       if [ ! -z "${ZOPEN_STABLE_BRANCH}" ]; then
@@ -593,7 +619,9 @@ checkEnv()
         fi
       fi
     else
-      printError "Unrecognized build line ${ZOPEN_BUILD_LINE}"
+      Error_Message="Unrecognized build line ${ZOPEN_BUILD_LINE}"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   else
     if [ "${ZOPEN_TYPE}x" = "TARBALLx" ]; then
@@ -641,7 +669,9 @@ checkEnv()
     if [ "${ZOPEN_CHECK}x" != "skipx" ] && ! ${skipcheck}; then
       export ZOPEN_CHECK_RESULTS_CODE="${ZOPEN_ROOT}/portchk.sh"
       if ! [ -x "${ZOPEN_CHECK_RESULTS_CODE}" ]; then
-        printError "zopen_check_results script needs to be provided to check the results."
+        Error_Message="zopen_check_results script needs to be provided to check the results."
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
     fi
   fi
@@ -665,10 +695,14 @@ checkEnv()
 
   if [ "${ZOPEN_TYPE}x" = "TARBALLx" ]; then
     if [ -z "${ZOPEN_URL}" ]; then
-      printError "ZOPEN_STABLE_URL, ZOPEN_DEV_URL, ZOPEN_URL or ZOPEN_TARBALL_URL needs to be defined"
+      Error_Message="ZOPEN_STABLE_URL, ZOPEN_DEV_URL, ZOPEN_URL or ZOPEN_TARBALL_URL needs to be defined"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     if [ -z "${ZOPEN_DEPS}" ]; then
-      printError "ZOPEN_STABLE_DEPS, ZOPEN_DEV_DEPS, ZOPEN_DEPS or ZOPEN_TARBALL_DEPS needs to be defined"
+      Error_Message="ZOPEN_STABLE_DEPS, ZOPEN_DEV_DEPS, ZOPEN_DEPS or ZOPEN_TARBALL_DEPS needs to be defined"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     implicitDeps="${implicitDeps} tar"
     ext=${ZOPEN_URL##*.}
@@ -684,10 +718,14 @@ checkEnv()
     printVerbose "Implicitly adding tarball dependencies: ${implicitDeps}"
   elif [ "${ZOPEN_TYPE}x" = "GITx" ]; then
     if [ -z "${ZOPEN_URL}" ]; then
-      printError "ZOPEN_STABLE_URL, ZOPEN_DEV_URL, ZOPEN_URL or ZOPEN_GIT_URL needs to be defined"
+      Error_Message="ZOPEN_STABLE_URL, ZOPEN_DEV_URL, ZOPEN_URL or ZOPEN_GIT_URL needs to be defined"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     if [ -z "${ZOPEN_DEPS}" ]; then
-      printError "ZOPEN_STABLE_DEPS, ZOPEN_DEV_DEPS, ZOPEN_DEPS or ZOPEN_GIT_DEPS needs to be defined"
+      Error_Message="ZOPEN_STABLE_DEPS, ZOPEN_DEV_DEPS, ZOPEN_DEPS or ZOPEN_GIT_DEPS needs to be defined"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     implicitDeps="${implicitDeps}"
     printVerbose "Implicitly adding git dependencies: ${implicitDeps}"
@@ -700,7 +738,9 @@ checkEnv()
 
   for category in $(echo ${ZOPEN_CATEGORIES_LOWER} | tr ' ' '\n' | sort -u); do
     if ! echo "${ZOPEN_VALID_CATEGORIES}" | tr ' ' '\n' | grep -q "^${category}$"; then
-      printError "Invalid category specified in \$ZOPEN_CATEGORIES: ${category}"
+      Error_Message="Invalid category specified in \$ZOPEN_CATEGORIES: ${category}"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   done
 
@@ -751,7 +791,9 @@ setDepsEnv()
           printVerbose "Setting up ${depdir} dependency environment"
           cd "${depdir}" && . ./.env
           if [ $? -gt 0 ]; then
-            printError "Failed to source ${depdir} .env"
+            Error_Message="Failed to source ${depdir} .env"
+	    content="${Error_Message}.How to fix error?"
+	    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
           fi
         fi
         foundDep=true
@@ -770,20 +812,26 @@ setDepsEnv()
       fi
       path=${ZOPEN_PKGINSTALL} # Install location
       if ! runAndLog "PATH=\"${ZOPEN_OLD_PATH}\" ${MYDIR}/zopen-install --install-or-upgrade ${dep} -v -y"; then
-        printError "zopen install command failed"
+        Error_Message="zopen install command failed"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
       depdir="${path}/${dep}/${dep}"
       printVerbose "Setting up upgraded ${depdir} dependency environment"
       cd "${depdir}" && . ./.env
       if [ $? -gt 0 ]; then
-        printError "Failed to source ${depdir} .env"
+        Error_Message="Failed to source ${depdir} .env"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
       versionPath="${depdir}/.version"
       if [ -r "${versionPath}" ]; then
         version=$(cat "${versionPath}")
       fi
       if ! validateVersion "${version}" "${operator}" "${requestedVersion}" "${depdir}"; then
-        printError "Dependency ${depdir} upgraded, but does not satisfy \"${operator}\" \"${requestedVersion}\""
+        Error_Message="Dependency ${depdir} upgraded, but does not satisfy \"${operator}\" \"${requestedVersion}\""
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
     fi
   done
@@ -901,14 +949,18 @@ tagTree()
 checkGitVersion()
 {
   if ! git --version > /dev/null 2> /dev/null; then
-    printError "git is required to download from the git repo"
+    Error_Message="git is required to download from the git repo"
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
   fi
   gitraw=$(git --version | awk '{print $3;}')
   v=${gitraw%%.*}
   vr=${gitraw%.*}
   r=${vr##*.}
   if [ ${v} -lt 2 ] || [ ${r} -lt 39 ]; then
-    printError "Need to be running at least git 2.39"
+    Error_Message="Need to be running at least git 2.39"
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
   fi
 }
 
@@ -925,15 +977,21 @@ gitClone()
       gitOptions=" --recurse-submodules"
     fi
     if ! runAndLog "git clone \"${ZOPEN_URL}\" ${gitOptions}"; then
-      printError "Unable to clone ${gitname} from ${ZOPEN_URL}"
+      Error_Message="Unable to clone ${gitname} from ${ZOPEN_URL}"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     if [ -n "${ZOPEN_GIT_BRANCH}" ]; then
       if ! git -C "${dir}" checkout "${ZOPEN_GIT_BRANCH}" > /dev/null; then
-        printError"Unable to checkout ${ZOPEN_URL} branch ${ZOPEN_GIT_BRANCH}"
+        Error_Message="Unable to checkout ${ZOPEN_URL} branch ${ZOPEN_GIT_BRANCH}"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
     elif [ -n "${ZOPEN_GIT_TAG}" ]; then
       if ! git -C "${dir}" checkout tags/"${ZOPEN_GIT_TAG}" -b "${ZOPEN_GIT_TAG}" > /dev/null; then
-        printError"Unable to checkout ${ZOPEN_URL} tag ${ZOPEN_GIT_TAG}"
+        Error_Message="Unable to checkout ${ZOPEN_URL} tag ${ZOPEN_GIT_TAG}"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       fi
     fi
     tagTree "${dir}"
@@ -949,19 +1007,25 @@ extractTarBall()
   if [ "x${noext}" = "x${tarballz}" ]; then
     # Standard tarball
     if ! tar --version > /dev/null 2> /dev/null; then
-      printError "The tar open source package is required by zopen-build. The z/OS default 'tar' is insufficient"
+      Error_Message="The tar open source package is required by zopen-build. The z/OS default 'tar' is insufficient"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     tarraw=$(tar --version | head -1 | awk '{print $4;}')
     v=${tarraw%%.*}
     r=${tarraw##*.}
     if [ ${v} -lt 1 ] || [ ${r} -lt 34 ]; then
-      printError "Need to be running at least tar 1.34"
+      Error_Message="Need to be running at least tar 1.34"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
 
     printInfo "Extract tarball ${tarballz} into ${dir}"
     tar -axf "${tarballz}"
     if [ $? -gt 0 ]; then
-      printError "Unable to untar ${tarballz}"
+      Error_Message="Unable to untar ${tarballz}"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   else
     # Standard unzip
@@ -972,13 +1036,17 @@ extractTarBall()
     printInfo "Extract zip ${tarballz} into ${dir}"
     out=$(unzip "${tarballz}" 2> /dev/null)
     if [ $? -gt 1 ]; then
-      printError "unzip failed for ${tarballz}."
+      Error_Message="unzip failed for ${tarballz}."
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
       echo "${out}" >&2
     fi
   fi
   rm -f "${tarballz}"
   tagTree "${dir}"
-  cd "${dir}" || printError "Cannot cd to ${dir}"
+  Error_Message="Cannot cd to ${dir}"
+  content="${Error_Message}.How to fix error?"
+  cd "${dir}" || AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
 
   # Clean up .git* files since we will be creating our own local git repo for applying patches
   rm -rf .git* .travis*
@@ -989,11 +1057,15 @@ extractTarBall()
   #
   if [ "${ZOPEN_GIT_SETUP}x" = "Nx" ]; then
     if ! git init -b main . > /dev/null || ! git commit --allow-empty -m "Create Empty Repository for patch management" > /dev/null; then
-      printError "Unable to initialize empty git repository for tarball"
+      Error_Message="Unable to initialize empty git repository for tarball"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   else
     if ! git init -b main . > /dev/null; then
-      printError "Unable to initialize git repository for tarball"
+      Error_Message="Unable to initialize git repository for tarball"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
 
     if ! asciiecho "
@@ -1012,15 +1084,21 @@ extractTarBall()
 *.po binary
 *.der binary
 " ".gitattributes"; then
-      printError "Unable to create .gitattributes for tarball"
+      Error_Message="Unable to create .gitattributes for tarball"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
 
     if ! git add . > /dev/null; then
-      printError "Unable to add files for git repository"
+      Error_Message="Unable to add files for git repository"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
 
     if ! git commit --allow-empty -m "Create Repository for patch management" > /dev/null; then
-      printError "Unable to commit git repository"
+      Error_Message="Unable to commit git repository"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   fi
 }
@@ -1028,7 +1106,9 @@ extractTarBall()
 downloadTarBall()
 {
   if ! curl --version > /dev/null; then
-    printError "curl is required to download a tarball"
+    Error_Message="curl is required to download a tarball"
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
   fi
   tarballz=$(basename "${ZOPEN_URL}")
   dir=${tarballz%%.tar.*}
@@ -1058,10 +1138,14 @@ downloadTarBall()
       if [ -f "${tarballz}" ] && [ $(wc -c "${tarballz}" | awk '{print $1}') -lt 1024 ]; then
         cat "${tarballz}" > /dev/null
       else
-        printError "Re-try curl for diagnostics"
+        Error_Message="Re-try curl for diagnostics"
+	content="${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
         curlCmd -L -0 -o /dev/null "${ZOPEN_URL}"
       fi
-      printError "Unable to download ${tarballz} from ${ZOPEN_URL}"
+      Error_Message="Unable to download ${tarballz} from ${ZOPEN_URL}"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     # curl tags the file as ISO8859-1 (oops) so the tag has to be removed
     chtag -b "${tarballz}"
@@ -1150,8 +1234,10 @@ applyPatches()
           (cd "${code_dir}" && git apply --reject "${p}" 2>&1)
         else
           if ! out=$( (cd "${code_dir}" && git apply --check "${p}" 2>&1 && git apply "${p}" 2>&1)); then
-            printSoftError "Patch of make tree failed (${p})."
-            printSoftError "${out}"
+            First_Error_Message="Patch of make tree failed (${p})."
+            Second_Error_Message="${out}"
+	    content="${Second_Error_Message} is incorrect.${First_Error_Message}How to fix error?"
+	    AI_Response "${content}" "printSoftError" "${First_Error_Message}\n***ERROR: ${Second_Error_Message}" "${First_Error_Message}\n***ERROR: ${Second_Error_Message}"
             failedcount=$((failedcount + 1))
             break
           fi
@@ -1194,7 +1280,9 @@ getCode()
       return 4
     fi
   else
-    printError "ZOPEN_TYPE should be one of GIT or TARBALL"
+    Error_Message="ZOPEN_TYPE should be one of GIT or TARBALL"
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     return 4
   fi
 }
@@ -1219,7 +1307,10 @@ cleanup()
     cleanlog="${ZOPEN_LOG_DIR}/${LOG_PFX}_clean.log"
     create_fifo_pipe "${cleanlog}"
     if ! runAndLog "${ZOPEN_CLEAN_CMD} >${TMP_FIFO_PIPE} 2>&1"; then
-      printError "Cleanup failed. Log: ${cleanlog}" >&2
+      Error_Message="Cleanup failed. Log: ${cleanlog}" >&2
+      filecontent=$(cat ${cleanlog} | tr -d "\n")
+      content="Log file failed:${filecontent}.Cleanup failed.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${cleanlog}" "${Error_Message}"
     fi
   fi
   rm -f ${ZOPEN_LOG_DIR}/bootstrap.success
@@ -1237,7 +1328,10 @@ bootstrap()
       bootlog="${ZOPEN_LOG_DIR}/${LOG_PFX}_bootstrap.log"
       create_fifo_pipe "${bootlog}"
       if ! runAndLog "${ZOPEN_BOOTSTRAP_CMD} >${TMP_FIFO_PIPE} 2>&1"; then
-        printError "Bootstrap failed. Log: ${bootlog}" >&2
+        Error_Message="Bootstrap failed. Log: ${bootlog}" >&2
+	filecontent=$(cat ${bootlog} | tr -d "\n")
+	content="Log file failed:${filecontent}.Bootstrap failed.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${bootlog}" "${Error_Message}"
       fi
       touch ${ZOPEN_LOG_DIR}/bootstrap.success
     fi
@@ -1253,7 +1347,9 @@ configure()
   if command -V "${ZOPEN_PRE_CONFIGURE_CODE}" >/dev/null 2>&1; then
     printVerbose "Running ${ZOPEN_PRE_CONFIGURE_CODE}"
     if ! "${ZOPEN_PRE_CONFIGURE_CODE}"; then
-        printError "Pre configure failed."
+        Error_Message="Pre configure failed."
+	content="${ZOPEN_PRE_CONFIGURE_CODE} is incorrect.Pre configure failed.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   fi
 
@@ -1267,9 +1363,15 @@ configure()
       create_fifo_pipe "${configlog}"
       if ! runAndLog "${ZOPEN_CONFIGURE_CMD} >${TMP_FIFO_PIPE} 2>&1"; then
         if [ "${ZOPEN_CONFIGURE_MINIMAL}" = "yes" ]; then
-          printError "Configure (minimal) failed. Log: ${configlog}"
+          Error_Message="Configure (minimal) failed. Log: ${configlog}"
+	  filecontent=$(cat ${configlog} | tr -d "\n")
+	  content="Log file failed:${filecontent}.Configure (minimal) failed.How to fix error?"
+	  AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${configlog}" "${Error_Message}"
         else
-          printError "Configure (full) failed. Log: ${configlog}"
+          Error_Message="Configure (full) failed. Log: ${configlog}"
+	  filecontent=$(cat ${configlog} | tr -d "\n")
+	  content="Log file failed:${filecontent}.Configure (full) failed.How to fix error?"
+	  AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${configlog}" "${Error_Message}"
         fi
       fi
       touch ${ZOPEN_LOG_DIR}/config.success
@@ -1280,13 +1382,26 @@ configure()
   printElapsedTime verbose "configure" "${configureStartTime}"
 }
 
+AI_Response()
+{
+  if ${ai}; then
+   CURL_OUTPUT=$(curl http://163.74.89.179:8080/v1/chat/completions -H "Content-Type: application/json" -d '{"model": "tinyllama", "messages": [{"role": "user", "content": "'"$1"'"}], "temperature": 0.9}')
+   response=$(echo $CURL_OUTPUT | jq -r '.choices[0].message.content')
+   $2 "$3\nHow to fix error:\n${response}"
+  else
+   $2 "$4"
+  fi
+}
+
 build()
 {
   buildStartTime=${SECONDS}
   if command -V "${ZOPEN_PRE_BUILD_CODE}" > /dev/null 2>&1; then
     printVerbose "Running ${ZOPEN_PRE_BUILD_CODE}"
     if ! "${ZOPEN_PRE_BUILD_CODE}"; then
-      printError "Pre build failed."
+      Error_Message="Pre build failed."
+      content="${ZOPEN_PRE_BUILD_CODE} is incorrect.Pre build failed.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
   fi
 
@@ -1296,9 +1411,15 @@ build()
     create_fifo_pipe "${makelog}"
     if ! runAndLog "${ZOPEN_MAKE_CMD} > ${TMP_FIFO_PIPE} 2>&1"; then
       if [ "${ZOPEN_MAKE_MINIMAL}" = "yes" ]; then
-        printError "Make (minimal) failed. Log: ${makelog}"
+        Error_Message="Make (minimal) failed. Log: ${makelog}"
+	filecontent=$(cat ${makelog} | tr -d "\n")
+	content="Log file failed:${filecontent}.Make (minimal) failed.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${makelog}" "${Error_Message}"
       else
-        printError "Make (full) failed. Log: ${makelog}"
+        Error_Message="Make (full) failed. Log: ${makelog}"
+	filecontent=$(cat ${makelog} | tr -d "\n")
+	content="Log file failed:${filecontent}.Make (full) failed.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${makelog}" "${Error_Message}"
       fi
     fi
   else
@@ -1328,23 +1449,35 @@ check()
       if echo "${testStatus}" | grep -q -E "actualFailures:[ ]*[0-9]+"; then
         failures=$(echo "${testStatus}" | grep "actualFailures:" | sed -e "s/.*actualFailures://" | tr -d ' ')
       else
-        printSoftError "${ZOPEN_CHECK_RESULTS_CODE} needs to emit an actualFailures:<number> line"
+        Error_Message="${ZOPEN_CHECK_RESULTS_CODE} needs to emit an actualFailures:<number> line"
+	filecontent=$(cat ${checklog} | tr -d "\n")
+	content="Log file failed:${filecontent}.${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printSoftError" "${Error_Message}\nPlease check content of log file: ${checklog}" "${Error_Message}"
         testStatusError=true
       fi
       if echo "${testStatus}" | grep -q -E "expectedFailures:[ ]*[0-9]+"; then
         expectedFailures=$(echo "${testStatus}" | grep "expectedFailures:" | sed -e "s/.*expectedFailures://" | tr -d ' ')
       else
-        printSoftError "${ZOPEN_CHECK_RESULTS_CODE} needs to emit an expectedFailures:<number> line"
+        Error_Message="${ZOPEN_CHECK_RESULTS_CODE} needs to emit an expectedFailures:<number> line"
+	filecontent=$(cat ${checklog} | tr -d "\n")
+	content="Log file failed:${filecontent}.${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printSoftError" "${Error_Message}\nPlease check content of log file: ${checklog}" "${Error_Message}"
         testStatusError=true
       fi
       if echo "${testStatus}" | grep -q -E "totalTests:[ ]*[0-9]+"; then
         totalTests=$(echo "${testStatus}" | grep "totalTests:" | sed -e "s/.*totalTests://" | tr -d ' ')
         if [ ${totalTests} -eq 0 ]; then
-          printSoftError "Total tests is 0"
+          Error_Message="Total tests is 0"
+	  filecontent=$(cat ${checklog} | tr -d "\n")
+	  content="Log file failed:${filecontent}.${Error_Message}.How to fix error?"
+	  AI_Response "${content}" "printSoftError" "${Error_Message}\nPlease check content of log file: ${checklog}" "${Error_Message}"
           testStatusError=true
         fi
       else
-        printSoftError "${ZOPEN_CHECK_RESULTS_CODE} needs to emit an totalTests:<number> line"
+        Error_Message="${ZOPEN_CHECK_RESULTS_CODE} needs to emit an totalTests:<number> line"
+	filecontent=$(cat ${checklog} | tr -d "\n")
+	content="Log file failed:${filecontent}.${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printSoftError" "${Error_Message}\nPlease check content of log file: ${checklog}" "${Error_Message}"
         testStatusError=true
       fi
       if echo "${testStatus}" | grep -q -E "expectedTotalTests:[ ]*[0-9]+"; then
@@ -1352,7 +1485,10 @@ check()
         checkTotalTests=true
       fi
       if ${testStatusError}; then
-        printError "Test Status:\n${testStatus}"
+        Error_Message="Test Status:\n${testStatus}"
+	filecontent=$(cat ${checklog} | tr -d "\n")
+	content="Log file failed:${filecontent}.$(echo "${Error_Message}" | tr -d "\n").How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${checklog}" "${Error_Message}"
       fi
       success="$((totalTests - failures))"
       percent="$(echo "${success}" "${totalTests}" | awk '{printf "%.0f", $1 * 100 / $2}')"
@@ -1380,7 +1516,10 @@ check()
       if ${checkTotalTests}; then
         if [ ${totalTests} -lt ${expectedTotalTests} ]; then
           printElapsedTime verbose "check" "${checkStartTime}"
-          printError "Executed tests (${totalTests}) is less than expected (${expectedTotalTests}). Failing..."
+          Error_Message="Executed tests (${totalTests}) is less than expected (${expectedTotalTests}). Failing..."
+	  filecontent=$(cat ${checklog} | tr -d "\n")
+	  content="Log file failed:${filecontent}.${totalTests} executed tests is less than ${expectedTotalTests} expected tests.How to fix error?"
+	  AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${checklog}" "${Error_Message}"
         fi
       fi
       if [ ${failures} -le ${expectedFailures} ]; then
@@ -1388,7 +1527,10 @@ check()
         return 0
       else
         printElapsedTime verbose "check" "${checkStartTime}"
-        printError "Failures (${failures}) not less than than expected (${expectedFailures}). Failing..."
+        Error_Message="Failures (${failures}) not less than than expected (${expectedFailures}). Failing..."
+	filecontent=$(cat ${checklog} | tr -d "\n")
+	content="Log file failed:${filecontent}.${failures} failures not less than ${expectedFailures} expected failures.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${checklog}" "${Error_Message}"
       fi
     fi
   else
@@ -1585,7 +1727,9 @@ ZZ
       # Use the first path specified in the dependency search list to install to
       if $noInstallRuntimeDeps; then
         if ! runAndLog "PATH=\"${ZOPEN_OLD_PATH}\" ${MYDIR}/zopen-install --install-or-upgrade ${dep} -v --no-deps -y"; then
-          printError "Failed to install dependencies"
+          Error_Message="Failed to install dependencies"
+	  content="${Error_Message}.How to fix error?"
+	  AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
         fi
       fi
 
@@ -1746,7 +1890,9 @@ cat <<zz >> "${ZOPEN_INSTALL_DIR}/metadata.json"
 }}
 zz
   if ! jq -e '.' "${ZOPEN_INSTALL_DIR}/metadata.json" 1>/dev/null 2>&1; then
-    printError "${ZOPEN_INSTALL_DIR}/metadata.json contains invalid json: $(cat ${ZOPEN_INSTALL_DIR}/metadata.json)"
+    Error_Message="${ZOPEN_INSTALL_DIR}/metadata.json contains invalid json: $(cat ${ZOPEN_INSTALL_DIR}/metadata.json)"
+    content="${ZOPEN_INSTALL_DIR}/metadata.json contains invalid json:$(cat ${ZOPEN_INSTALL_DIR}/metadata.json | tr -d "\n").How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of json file: ${ZOPEN_INSTALL_DIR}/metadata.json" "${Error_Message}"
   fi
   if [ -n "${caveats}" ]; then
     jq --arg caveats "${caveats}" \
@@ -1775,7 +1921,10 @@ install()
     installlog="${ZOPEN_LOG_DIR}/${LOG_PFX}_install.log"
     create_fifo_pipe "${installlog}"
     if ! runAndLog "${ZOPEN_INSTALL_CMD} > ${TMP_FIFO_PIPE} 2>&1"; then
-      printError "Install failed. Log: ${installlog}"
+      Error_Message="Install failed. Log: ${installlog}"
+      filecontent=$(cat ${installlog} | tr -d "\n")
+      content="Log file failed:${filecontent}.Install failed.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${installlog}" "${Error_Message}"
     fi
     replaceHardcodedPaths
     createEnvAndSetup
@@ -1783,7 +1932,10 @@ install()
     if command -V "${ZOPEN_POST_INSTALL_CODE}" > /dev/null 2>&1; then
       printVerbose "Running ${ZOPEN_POST_INSTALL_CODE}"
       if ! "${ZOPEN_POST_INSTALL_CODE}" "${ZOPEN_INSTALL_DIR}"; then
-        printError "Post install failed.${installlog}"
+        Error_Message="Post install failed.${installlog}"
+	filecontent=$(cat ${installlog} | tr -d "\n")
+	content="Log file failed:${filecontent}.Post install failed.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${installlog}" "${Error_Message}"
       fi
     fi
 
@@ -1799,7 +1951,10 @@ install()
     asciiecho "${ZOPEN_BUILD_LINE}" "${ZOPEN_INSTALL_DIR}/.buildline"
 
     if [ -z "$(command -v zopen_get_version)" ]; then
-      printError "A zopen_get_version() function must be defined in the buildenv to extract the version contents"
+      Error_Message="A zopen_get_version() function must be defined in the buildenv to extract the version contents"
+      filecontent=$(cat ${installlog} | tr -d "\n")
+      content="Log file failed:${filecontent}.${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${installlog}" "${Error_Message}"
     else
       versionString=$(zopen_get_version)
       echo ${versionString} | awk -F. '{
@@ -1822,7 +1977,10 @@ install()
       }'
 
       if [ $? -ne 0 ]; then
-        printError "The version string \"${versionString}\" uses an invalid version format"
+        Error_Message="The version string \"${versionString}\" uses an invalid version format"
+	filecontent=$(cat ${installog} | tr -d "\n")
+	content="Log file failed:${filecontent}.${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${installlog}" "${Error_Message}"
       fi
       asciiecho "${versionString}" "${ZOPEN_INSTALL_DIR}/.version"
       cp "${ZOPEN_INSTALL_DIR}/.version" "${ZOPEN_ROOT}/install/"
@@ -1842,7 +2000,10 @@ install()
     if ${generatePax}; then
       printHeader "Generating pax.Z from ${ZOPEN_INSTALL_DIR}"
       if ! runAndLog "${ZOPEN_PAX_CMD}"; then
-        printError "Could not generate pax \"${paxFileName}\""
+        Error_Message="Could not generate pax \"${paxFileName}\""
+	filecontent=$(cat ${installlog} | tr -d "\n")
+	content="Log file failed:${filecontent}.${Error_Message}.How to fix error?"
+	AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of log file: ${installlog}" "${Error_Message}"
       fi
 
       #TODO: Hack so that we can use coreutils md5sum without impacting builds
@@ -2043,7 +2204,9 @@ LABEL specification=1.0.0"
   dockerfilecontents="${dockerfilecontents}\nCOPY .zpm @{CONTAINER_READWRITE}/.zpm"
 
   if ! asciiecho "${dockerfilecontents}" "${ZOPEN_IMAGE_DOCKERFILE_NAME}"; then
-    printError "Unable to make ${ZOPEN_IMAGE_DOCKERFILE_NAME}"
+    Error_Message="Unable to make ${ZOPEN_IMAGE_DOCKERFILE_NAME}"
+    content="Please help us check content of docker file:$(echo "${dockerfilecontents}" | tr -d "\n").${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}\nPlease check content of docker file:\n${dockerfilecontents}" "${Error_Message}"
   fi
 
   if [ -z ${ZOPEN_IMAGE_REGISTRY} ]; then
@@ -2167,7 +2330,9 @@ zz
     #        |set|
     #        |overrideset|
     if [ $(echo "${line}" | awk -F '|' '{print NF-1}') -ne 2 ]; then
-      printError "${line} must have 2 '|' seperators only"
+      Error_Message="${line} must have 2 '|' seperators only"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
     var=$(echo ${line} | cut -d '|' -f 1)
     action=$(echo ${line} | cut -d '|' -f 2)
@@ -2242,7 +2407,9 @@ zz
     free(envar_value);
 zz
     else
-      printError "${action} is not valid, must be one of set, unset, or prepend"
+      Error_Message="${action} is not valid, must be one of set, unset, or prepend"
+      content="${Error_Message}.How to fix error?"
+      AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
     fi
 
   done
@@ -2258,7 +2425,9 @@ zz
   fi
 
   if ! runAndLog "${CC} ${CFLAGS} ${CPPFLAGS} -DPATH_MAX=1024 ${extraOptions} -c ${output} -o ${output}.o"; then
-    printError "Compiler command for ${output} failed to compile"
+    Error_Message="Compiler command for ${output} failed to compile"
+    content="${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
   fi
 
   # Apply it in both LIB envars because some ports use ZOPEN_EXTRA_LIBS directly
@@ -2371,7 +2540,9 @@ fi
 if command -V "${ZOPEN_PRE_TERMINATE_CODE}" > /dev/null 2>&1; then
   printVerbose "Running ${ZOPEN_PRE_TERMINATE_CODE}"
   if ! "${ZOPEN_PRE_TERMINATE_CODE}" "${ZOPEN_INSTALL_DIR}"; then
-    printError "Pre terminate failed."
+    Error_Message="Pre terminate failed."
+    content="Both ${ZOPEN_PRE_TERMINATE_CODE} and ${ZOPEN_INSTALL_DIR} are incorrect.${Error_Message}.How to fix error?"
+    AI_Response "${content}" "printError" "${Error_Message}" "${Error_Message}"
   fi
 fi
 
