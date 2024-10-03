@@ -66,6 +66,7 @@ async def get_release_cve_info(session, project, release_name, asset):
     all_cves = []
     cves = await fetch_cves(session, commit_sha)
     for cve in cves:
+        severity = cve.get("severity", [])  # Initialize severity from cve data
         if not severity or not severity[0]:
             continue  # Skip this iteration if severity is None or empty
         cvss_vector = severity[0].get("score")
