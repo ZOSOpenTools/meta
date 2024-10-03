@@ -244,10 +244,7 @@ fi
 
 printInfo "- Promoting from '${rootfs}' to '${promotefs}'..."
 
-printDebug "Generating temporary pipe"
-FIFO_PIPE_STDOUT=$(mktempfile "" ".pipe")
-
-progressHandler "spinner" "- promote complete" &
+progressHandler "spinner" "- Promoted from '${rootfs}' to '${promotefs}'." &
 ph=$!
 killph="kill -HUP ${ph}"
 addCleanupTrapCmd "${killph}"
@@ -262,7 +259,8 @@ printDebug "Need to pax old dir and unpax to new dest to keep symlink structure"
 printDebug "Generating temporary pipe"
 FIFO_PIPE_STDOUT=$(mktempfile "promotestdout" ".pipe")
 [ ! -p "${FIFO_PIPE_STDOUT}" ] || rm -f "${FIFO_PIPE_STDOUT}"
-mkfifo "${FIFO_PIPE_STDOUT}" && chtag -tc 819 "${FIFO_PIPE_STDOUT}" && addCleanupTrapCmd "rm -rf ${FIFO_PIPE_STDOUT}"
+mkfifo "${FIFO_PIPE_STDOUT}" && chtag -tc 819 "${FIFO_PIPE_STDOUT}"
+addCleanupTrapCmd "rm -rf ${FIFO_PIPE_STDOUT}"
 cd "${rootfs}" && pax -rw -p p "." "${promotefs}"  2>>"${FIFO_PIPE_STDOUT}" &
 while read OUTMSG; do
   printDebug "Parsing output: '${OUTMSG}'"
@@ -282,6 +280,7 @@ while read OUTMSG; do
 done < "${FIFO_PIPE_STDOUT}"
 [ -n "${FIFO_PIPE_STDOUT}" ] && [ -e "${FIFO_PIPE_STDOUT}" ] && rm -f "${FIFO_PIPE_STDOUT}"
 ${killph} 2>/dev/null  # if the timer is not running, the kill will fail
+waitforpid ${ph}  # Make sure it's finished writing to screen
 
 printVerbose "Grabbing pkginstall location from within promoted env"
 if [ -e "${promotefs}/etc/zopen/fstype" ]; then
@@ -311,6 +310,7 @@ if ! ${keepzopentooling}; then
     flecnt=$(expr ${flecnt} + 1)
   done
   ${killph} 2>/dev/null  # if the timer is not running, the kill will fail
+  waitforpid ${ph}  # Make sure it's finished writing to screen
   syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_ZOPEN}" "PROMOTE" "mainline" "meta tooling checked for and removed from promoted environment; ${flecnt} link(s) removed"
 fi
 

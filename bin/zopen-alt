@@ -55,8 +55,9 @@ mergeNewVersion()
 {
   package="$1"
   newver="$2"
-  oldver="$2"
-  [ -z "${package}" ] && printError "Internal error; no packagename provided to merge."
+  processActionScripts "transactionPre"
+  processActionScripts "installPre" # We are effectively re-installing
+  [ -z "${package}" ] && printError "Internal error; no package name provided to merge."
   [ -d "${ZOPEN_PKGINSTALL}/${package}/${newver}" ] || printError "Version '${newver}' was not available to set as current"
   if [ -e "${ZOPEN_PKGINSTALL}/${package}/${package}" ]; then
     printVerbose "Removing main link"
@@ -85,6 +86,8 @@ mergeNewVersion()
     version=$(cat "${ZOPEN_PKGINSTALL}/${package}/${package}/.releaseinfo")
   fi
   syslog "${ZOPEN_LOG_PATH}/audit.log" "${LOG_A}" "${CAT_PACKAGE}" "ALT" "setAlt" "Set '${package}' to version:${version};"
+  processActionScripts "installPost"
+  processActionScripts "transactionPost"
 }
 
 setAlt()
@@ -164,11 +167,11 @@ listAlts()
   #  echo "${found}" | xargs | tr ' ' '\n' | while read repo; do
   TMP_FIFO_PIPE="${HOME}/altselect.pipe"
   [ ! -p "${TMP_FIFO_PIPE}" ] || rm -f "${TMP_FIFO_PIPE}"
-  mkfifo ${TMP_FIFO_PIPE}
+  mkfifo "${TMP_FIFO_PIPE}"
   echo "${found}" | xargs | tr ' ' '\n' >> "${TMP_FIFO_PIPE}" &
   while read repo; do
     printVerbose "Parsing repo: '${repo}' as '${repo#"${ZOPEN_PKGINSTALL}"/}'"
-    i=$(expr ${i} + 1)
+    i=$((i + 1))
     if [ "${deref#"${ZOPEN_PKGINSTALL}"/}" = "${repo#"${ZOPEN_PKGINSTALL}"/}" ]; then
       current=${i}
       printInfo "${NC}${GREEN}${i}: ${repo#"${ZOPEN_PKGINSTALL}"/}  <-  current${NC}"
@@ -176,7 +179,7 @@ listAlts()
       printInfo "${i}: ${repo#"${ZOPEN_PKGINSTALL}"/}"
     fi
   done < "${TMP_FIFO_PIPE}"
-  [ ! -p ${TMP_FIFO_PIPE} ] || rm -rf "${TMP_FIFO_PIPE}"
+  [ ! -p "${TMP_FIFO_PIPE}" ] || rm -rf "${TMP_FIFO_PIPE}"
 
   if ${select}; then
     mutexReq "zopen" "zopen"
@@ -228,7 +231,9 @@ while [ $# -gt 0 ]; do
     verbose=true
     ;;
   "--debug")
+    # shellcheck disable=SC2034
     verbose=true
+    # shellcheck disable=SC2034
     debug=true
     ;;
   *)

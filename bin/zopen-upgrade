@@ -1,0 +1,183 @@
+#!/bin/sh
+# Upgrade utility for z/OS Open Tools - https://github.com/ZOSOpenTools
+#
+# All zopen-* scripts MUST start with this code to maintain consistency
+#
+setupMyself()
+{
+  ME=$(basename $0)
+  MYDIR="$( cd "$(dirname "$0")" >/dev/null 2>&1 && pwd -P )"
+  INCDIR="${MYDIR}/../include"
+  if ! [ -d "${INCDIR}" ] && ! [ -f "${INCDIR}/common.sh" ]; then
+    echo "Internal Error. Unable to find common.sh file to source" >&2
+    exit 8
+  fi
+  # shellcheck disable=SC1091
+  . "${INCDIR}/common.sh"
+}
+setupMyself
+checkWritable
+
+printHelp(){
+  cat << HELPDOC
+zopen upgrade is a utility for z/OS Open Tools to upgrade packages to
+a later release
+
+Usage: zopen upgrade [OPTION] [PARAMETERS] [PACKAGES]
+
+Options:
+  -y, --yes         automatically answer yes to prompts
+  -v, --verbose     run in verbose mode
+  -h,-?, --help     display this help and exit
+
+Examples:
+  zopen upgrade foo 
+                    upgrade package foo if installed
+  zopen upgrade -y  upgrade all packages to latest version on their
+                    releaseline
+
+Report bugs at https://github.com/ZOSOpenTools/meta/issues .
+
+HELPDOC
+}
+
+
+
+# Main code start here
+# Need to set a number of variables for use in the install function
+# which is common between install & upgrade
+args=$*
+verbose=false
+debug=false
+xdebug=false
+# shellcheck disable=SC2034
+selectVersion=false
+# shellcheck disable=SC2034
+setActive=true
+# shellcheck disable=SC2034
+downloadOnly=false
+# shellcheck disable=SC2034
+reinstall=false
+nosymlink=false
+doNotInstallDeps=true
+yesToPrompts=false
+chosenRepos=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    "--yes" | "-y")
+      yesToPrompts=true  # Automatically answer 'yes' to any questions
+      ;;
+    "--no-set-active")
+      setactive=false  # Install package as normal but keep existing installation as active
+      ;;
+    "-h" | "--help" | "-?")
+      printHelp "${args}"
+      exit 0
+      ;;
+     "-v" | "--verbose")
+      verbose=true
+      ;;
+    "--debug")
+      verbose=true
+      debug=true
+      ;;
+    "--xdebug")
+      verbose=true
+      debug=true
+      xdebug=true
+    ;;
+    "--version")
+      zopen-version "${ME}"
+      exit 0
+      ;;
+    -*) printError "Unsupported parameter '$1'" ;;
+    *)
+      chosenRepos=" ${chosenRepos} $1 ";
+      ;;
+  esac
+  shift;
+done
+
+${xdebug} && set -x && printVerbose "Enabled command execution trace" 
+
+if [ -z "${chosenRepos}" ]; then
+    printVerbose "No specific port to upgrade, upgrade all installed packages"
+    printInfo "- Querying installed packages"
+    progressHandler "pkgcheck" "- Query of installed packages complete" &
+    ph=$!
+    killph="kill -HUP ${ph}"
+    addCleanupTrapCmd "${killph}"
+    chosenRepos=$(zopen list --installed)
+    ${killph} 2>/dev/null # if the timer is not running, the kill will fail
+    waitforpid ${ph}  # Make sure it's finished writing to screen
+fi
+
+checkIfConfigLoaded
+
+export SSL_CERT_FILE="${ZOPEN_CA}"
+export GIT_SSL_CAINFO="${ZOPEN_CA}"
+export CURL_CA_BUNDLE="${ZOPEN_CA}"
+
+printDebug "Installing to zopen file system: ${ZOPEN_ROOTFS}"
+if [ -z "${ZOPEN_ROOTFS}" ]; then
+  printError "Unable to locate zopen file system, \${ZOPEN_ROOTFS} is undefined"
+fi
+downloadDir="${ZOPEN_ROOTFS}/var/cache/zopen"
+
+
+if [ ! -d "${downloadDir}" ]; then
+  mkdir -p "${downloadDir}"
+  if [ $? -gt 0 ]; then
+    printError "Could not create download directory: ${downloadDir}"
+  fi
+fi
+
+# Parse passed in repositories and check if valid zopen framework repos
+printVerbose "Querying remote repo for latest package information"
+getRepos
+grfgRc=$?
+[ 0 -ne ${grfgRc} ] && exit ${grfgRc};
+installArray=""
+
+mutexReq "zopen" "zopen"
+printDebug "Parsing list of packages to install and verifying validity"
+
+if [ -z "${chosenRepos}" ]; then
+  badportlist=""
+  for chosenRepo in $(echo "${chosenRepos}" | tr ',' ' '); do
+    printVerbose "Processing repo: ${chosenRepo}"
+    printDebug "Stripping any version (%), tag (#) or port suffixes and trim"
+    toolrepo=$(echo "${chosenRepo}" | sed -e 's#%.*##' -e 's#=.*##' -e 's#.*port##')
+    toolfound=$(echo "${repo_results}" | awk -vtoolrepo="${toolrepo}" '$0 == toolrepo {print}') 
+    if [ "${toolfound}" = "${toolrepo}" ]; then
+      printVerbose "Adding '${chosenRepo}' to the install queue"
+      installArray=$(printf "%s\n%s" "${installArray}" "${chosenRepo}")
+    else
+      badportlist=$(printf "%s %s" "${badportlist}" "${toolrepo}")
+    fi
+  done
+
+  if [ -z "${badportlist}" ]; then
+    printSoftError "The following requested port(s) do not exist:\n\t${badportlist}"
+  fi
+  upgradeList=$(jq --raw-output '.release_data| keys[]' "${JSON_CACHE}")
+  generateInstallGraph "${upgradeList}"
+else
+  validateInstallList "${chosenRepos}"
+  printInfo "- Generating upgrade graph"
+  progressHandler "spinner" "- Generated upgrade graph" &
+  ph=$!
+  killph="kill -HUP ${ph}"
+  addCleanupTrapCmd "${killph}"
+  generateInstallGraph "${chosenRepos}"
+  ${killph} 2>/dev/null # if the timer is not running, the kill will fail
+  waitforpid ${ph}  # Make sure it's finished writing to screen
+fi
+
+if [ 0 -eq "$(echo "${installList}" | jq --raw-output '.installqueue| length')" ]; then
+  printInfo "- No packages to upgrade"
+else
+  processRepoInstallFile
+fi
+
+mutexFree "zopen"
