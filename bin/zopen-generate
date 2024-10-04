@@ -75,7 +75,7 @@ while ! ${valid}; do
   categories=$(getInput)
   categories=$(printf "%s" "${categories}" | tr '[:upper:]' '[:lower:]')
   error=false
-  if [ -z ${categories} ]; then
+  if [ -z "${categories}" ]; then
     printError "No category specified"
     exit 8
   fi

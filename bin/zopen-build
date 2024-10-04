@@ -523,7 +523,7 @@ loadBuildEnv()
     printError "Build environment file '${buildEnvFile}' does not exist or is not readable"
   fi
 
-  # Indicates to .env script that we're in zopen build
+  # Indicates to .appenv script that we're in zopen build
   export ZOPEN_IN_ZOPEN_BUILD="$LOGNAME.$$.$RANDOM"
 
   . ${buildEnvFile}
@@ -736,22 +736,28 @@ setDepsEnv()
     requestedVersion="${requestedMajor}.${requestedMinor}.${requestedPatch}.${requestedSubrelease}"
     foundDep=false
     for path in $(echo ${depsPath} | tr '|' '\n'); do
-      if [ -r "${path}/${dep}/${dep}/.env" ]; then
+      if [ -r "${path}/${dep}/${dep}/.appenv" ]; then
         depdir="${path}/${dep}/${dep}"
         versionPath="${depdir}/.version"
         if [ -r "${versionPath}" ]; then
           version=$(cat "${versionPath}")
         fi
-        # Avoid double sourcing the .env if we're forcing an upgrade on it
+        # Avoid double sourcing the .appenv if we're forcing an upgrade on it
         if ! ${forceUpgradeDeps}; then
           if ! validateVersion "${version}" "${operator}" "${requestedVersion}" "${depdir}"; then
             continue
           fi
 
           printVerbose "Setting up ${depdir} dependency environment"
-          cd "${depdir}" && . ./.env
+          # Set expected environment variables
+          #TODO: migrate _HOME variables from .env to .appenv
+          depUpper=$(echo "${dep}" | awk '{print toupper($0)}')
+          export ${depUpper}_HOME="${depdir}"
+          export PATH="${depdir}/bin:$PATH"
+          export LIBPATH="${depdir}/lib:$LIBPATH"
+          cd "${depdir}" && . ./.appenv
           if [ $? -gt 0 ]; then
-            printError "Failed to source ${depdir} .env"
+            printError "Failed to source ${depdir} .appenv"
           fi
         fi
         foundDep=true
