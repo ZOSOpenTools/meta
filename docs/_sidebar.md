@@ -33,3 +33,4 @@
     - [zopen community Repos](https://github.com/zopencommunity)
     - [Discussions](https://github.com/zopencommunity/meta/discussions)
     - [Guild Meetings](https://github.com/zopencommunity/meta/discussions/categories/guild)
+    - [Guild Meetings By Topics](/Guides/ToolsGuildMeetingLinks.md)
